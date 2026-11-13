@@ -2,6 +2,10 @@ import Database from 'better-sqlite3';
 import { randomBytes } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
+import type { Priority } from './priority';
+
+export { PRIORITY_ORDER, PRIORITY_VALUES } from './priority';
+export type { Priority } from './priority';
 
 export interface User {
   id: number;
@@ -34,8 +38,6 @@ export interface AuthChallenge {
   challenge: string;
   expires_at: number;
 }
-
-export type Priority = 'high' | 'medium' | 'low';
 
 export interface Todo {
   id: number;
@@ -214,13 +216,16 @@ export const userDB = {
 };
 
 export const todoDB = {
-  findAllByUser(userId: number): Todo[] {
-    const rows = getDb().prepare(
+  findAllByUser(userId: number, priority?: Priority): Todo[] {
+    const statement = getDb().prepare(
       `SELECT id, user_id, title, completed, due_date, priority, is_recurring,
               recurrence_pattern, reminder_minutes, last_notification_sent,
               created_at, updated_at
-       FROM todos WHERE user_id = ?`,
-    ).all(userId) as TodoRow[];
+       FROM todos WHERE user_id = ?${priority === undefined ? '' : ' AND priority = ?'}`,
+    );
+    const rows = (priority
+      ? statement.all(userId, priority)
+      : statement.all(userId)) as TodoRow[];
     return rows.map(mapTodo);
   },
 

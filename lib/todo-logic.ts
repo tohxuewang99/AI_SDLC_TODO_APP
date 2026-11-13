@@ -1,10 +1,5 @@
-import type { Priority, Todo } from '@/lib/db';
-
-const PRIORITY_ORDER: Record<Priority, number> = {
-  high: 0,
-  medium: 1,
-  low: 2,
-};
+import { PRIORITY_ORDER } from './priority.ts';
+import type { Todo } from '@/lib/db';
 
 function dateTime(value: string): number {
   const parsed = new Date(value);

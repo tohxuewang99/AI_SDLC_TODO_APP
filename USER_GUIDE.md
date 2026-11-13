@@ -7,6 +7,13 @@ sections. Add a todo with a title; priority defaults to Medium, and a due date
 is optional. Due dates are entered and shown in Singapore time, and new due
 dates must be at least one minute in the future.
 
+Priority badges use red for High, yellow for Medium, and blue for Low. Overdue
+and Pending todos are ordered by priority, then earliest due date (todos
+without a due date come last), then newest creation date. Completed todos stay
+ordered by completion time. Use the **Priority** filter to show one priority or
+choose **All Priorities** to show everything; changing a todo's priority updates
+the current list immediately.
+
 Use the checkbox to complete or reopen a todo. Choose **Edit** to change its
 title, priority, or due date; canceling or dismissing the edit leaves it
 unchanged. **Delete** removes a todo immediately. Todo data is private to the

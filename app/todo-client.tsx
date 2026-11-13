@@ -12,6 +12,12 @@ import {
 } from '@/lib/timezone';
 import { sectionTodos } from '@/lib/todo-logic';
 
+const PRIORITY_BADGE_STYLES: Record<Todo['priority'], string> = {
+  high: 'border-[#EF4444] bg-red-100 text-red-800 dark:border-[#F87171] dark:bg-red-950 dark:text-[#F87171]',
+  medium: 'border-[#F59E0B] bg-yellow-100 text-yellow-800 dark:border-[#FBBF24] dark:bg-yellow-950 dark:text-[#FBBF24]',
+  low: 'border-[#3B82F6] bg-blue-100 text-blue-800 dark:border-[#60A5FA] dark:bg-blue-950 dark:text-[#60A5FA]',
+};
+
 interface TodoClientProps {
   initialTodos: Todo[];
   userId: number;
@@ -26,6 +32,18 @@ interface EditValues {
   title: string;
   dueDate: string;
   priority: Todo['priority'];
+}
+
+function PriorityBadge({ priority }: { priority: Todo['priority'] }) {
+  const label = priority[0].toUpperCase() + priority.slice(1);
+  return (
+    <span
+      aria-label={`${label} priority`}
+      className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${PRIORITY_BADGE_STYLES[priority]}`}
+    >
+      {label}
+    </span>
+  );
 }
 
 async function requestJson<T>(url: string, method: string, body?: unknown): Promise<T> {
@@ -82,8 +100,8 @@ function TodoSection({
                 <p className={`break-words font-medium ${todo.completed ? 'text-slate-500 line-through' : 'text-slate-900'}`}>
                   {todo.title}
                 </p>
-                <div className="mt-1 flex flex-wrap gap-x-3 text-sm text-slate-500">
-                  <span className="capitalize">{todo.priority} priority</span>
+                <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-slate-500">
+                  <PriorityBadge priority={todo.priority} />
                   {todo.due_date && <span>Due {formatSingaporeDateTime(todo.due_date)}</span>}
                 </div>
               </div>
@@ -116,6 +134,7 @@ export default function TodoClient({ initialTodos, userId, initialNow }: TodoCli
   const [now, setNow] = useState(() => new Date(initialNow));
   const [title, setTitle] = useState('');
   const [priority, setPriority] = useState<Todo['priority']>('medium');
+  const [priorityFilter, setPriorityFilter] = useState<Todo['priority'] | 'all'>('all');
   const [dueDate, setDueDate] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [editingTodo, setEditingTodo] = useState<Todo | null>(null);
@@ -128,7 +147,10 @@ export default function TodoClient({ initialTodos, userId, initialNow }: TodoCli
     return () => window.clearInterval(timer);
   }, []);
 
-  const sections = sectionTodos(todos, now);
+  const filteredTodos = priorityFilter === 'all'
+    ? todos
+    : todos.filter((todo) => todo.priority === priorityFilter);
+  const sections = sectionTodos(filteredTodos, now);
 
   async function addTodo(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -357,11 +379,29 @@ export default function TodoClient({ initialTodos, userId, initialNow }: TodoCli
 
       {error && <p className="mt-4 text-sm text-red-700" role="alert">{error}</p>}
 
+      <label className="mt-8 flex w-fit items-center gap-3 text-sm font-medium text-slate-700">
+        <span>Priority</span>
+        <select
+          aria-label="Priority filter"
+          className="rounded-xl border border-slate-300 bg-white px-3 py-2"
+          onChange={(event) => setPriorityFilter(event.target.value as Todo['priority'] | 'all')}
+          value={priorityFilter}
+        >
+          <option value="all">All Priorities</option>
+          <option value="high">High Priority</option>
+          <option value="medium">Medium Priority</option>
+          <option value="low">Low Priority</option>
+        </select>
+      </label>
+
       <TodoSection title="Overdue" todos={sections.overdue} onToggle={toggleTodo} onEdit={openEdit} onDelete={deleteTodo} />
       <TodoSection title="Pending" todos={sections.pending} onToggle={toggleTodo} onEdit={openEdit} onDelete={deleteTodo} />
       <TodoSection title="Completed" todos={sections.completed} onToggle={toggleTodo} onEdit={openEdit} onDelete={deleteTodo} />
       {todos.length === 0 && (
         <p className="mt-8 text-center text-sm text-slate-500">No todos yet. Add one above.</p>
+      )}
+      {todos.length > 0 && filteredTodos.length === 0 && (
+        <p className="mt-8 text-center text-sm text-slate-500">No todos match this priority.</p>
       )}
 
       {editingTodo && editValues && (

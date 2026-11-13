@@ -1,19 +1,28 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { getSession } from '@/lib/auth';
-import { todoDB, type CreateTodoInput } from '@/lib/db';
+import { todoDB, type CreateTodoInput, type Priority } from '@/lib/db';
 import { getSingaporeNow, isDueDateAtLeastOneMinuteAway, parseSingaporeDateTime, toSingaporeIsoString } from '@/lib/timezone';
-import { isPriority, normalizeTodoTitle } from '@/lib/todo-validation';
+import { isPriority, normalizeTodoTitle, validatePriority } from '@/lib/todo-validation';
 
 function invalidBody() {
   return NextResponse.json({ error: 'Request body must be a JSON object' }, { status: 400 });
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   const session = await getSession();
   if (!session) {
     return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
   }
-  return NextResponse.json(todoDB.findAllByUser(session.userId));
+  const priorityValue = new URL(request.url).searchParams.get('priority');
+  if (priorityValue === null) {
+    return NextResponse.json(todoDB.findAllByUser(session.userId));
+  }
+  if (!isPriority(priorityValue)) {
+    return NextResponse.json({
+      error: `Invalid priority: ${priorityValue}. Must be 'high', 'medium', or 'low'.`,
+    }, { status: 400 });
+  }
+  return NextResponse.json(todoDB.findAllByUser(session.userId, priorityValue));
 }
 
 export async function POST(request: NextRequest) {
@@ -38,8 +47,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Title is required' }, { status: 400 });
   }
 
-  if (input.priority !== undefined && !isPriority(input.priority)) {
-    return NextResponse.json({ error: 'Priority must be high, medium, or low' }, { status: 400 });
+  let priority: Priority;
+  try {
+    priority = validatePriority(input.priority);
+  } catch (error) {
+    return NextResponse.json({
+      error: error instanceof Error ? error.message : 'Invalid priority',
+    }, { status: 400 });
   }
 
   let dueDate: string | null = null;
@@ -63,7 +77,7 @@ export async function POST(request: NextRequest) {
   const todoInput: CreateTodoInput = {
     title,
     due_date: dueDate,
-    ...(input.priority === undefined ? {} : { priority: input.priority }),
+    priority,
   };
   return NextResponse.json(todoDB.create(session.userId, todoInput), { status: 201 });
 }

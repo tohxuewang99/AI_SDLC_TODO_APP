@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { getSession } from '@/lib/auth';
 import { todoDB, type UpdateTodoInput } from '@/lib/db';
 import { parseSingaporeDateTime, toSingaporeIsoString } from '@/lib/timezone';
-import { isPriority, normalizeTodoTitle } from '@/lib/todo-validation';
+import { normalizeTodoTitle, validatePriority } from '@/lib/todo-validation';
 
 interface RouteContext {
   params: Promise<{ id: string }>;
@@ -71,10 +71,18 @@ export async function PUT(request: NextRequest, { params }: RouteContext) {
     updates.title = title;
   }
   if (input.priority !== undefined) {
-    if (!isPriority(input.priority)) {
-      return NextResponse.json({ error: 'Priority must be high, medium, or low' }, { status: 400 });
+    if (input.priority === null) {
+      return NextResponse.json({
+        error: "Invalid priority: null. Must be 'high', 'medium', or 'low'.",
+      }, { status: 400 });
     }
-    updates.priority = input.priority;
+    try {
+      updates.priority = validatePriority(input.priority);
+    } catch (error) {
+      return NextResponse.json({
+        error: error instanceof Error ? error.message : 'Invalid priority',
+      }, { status: 400 });
+    }
   }
   if (input.due_date !== undefined) {
     if (input.due_date === null) {

@@ -48,7 +48,7 @@ test('creates a title-only todo with defaults in Pending', async ({ page }) => {
 
   await expect(page.getByRole('heading', { name: 'Pending (1)' })).toBeVisible();
   await expect(page.getByText('Buy groceries')).toBeVisible();
-  await expect(page.getByText('Medium priority')).toBeVisible();
+  await expect(page.getByLabel('Medium priority')).toBeVisible();
   const response = await page.request.get('/api/todos');
   const todos = await response.json();
   expect(todos).toHaveLength(1);
@@ -66,7 +66,7 @@ test('creates a high-priority todo with a future Singapore due date', async ({ p
   await createTodo(page, { title: 'Prepare presentation', priority: 'high', dueDate });
 
   await expect(page.getByRole('heading', { name: 'Pending (1)' })).toBeVisible();
-  await expect(page.getByText('High priority')).toBeVisible();
+  await expect(page.getByLabel('High priority')).toBeVisible();
   await expect(page.getByText(/^Due \d/)).toBeVisible();
 });
 
@@ -133,7 +133,12 @@ test('edits fields and re-sections an item, while cancel discards changes', asyn
 
 test('toggles completion and deletes a todo without confirmation', async ({ page }) => {
   await register(page);
+  const createResponse = page.waitForResponse((response) => (
+    response.url().endsWith('/api/todos')
+    && response.request().method() === 'POST'
+  ));
   await createTodo(page, { title: 'Read a book' });
+  await createResponse;
   await page.getByLabel('Mark "Read a book" as complete').click();
 
   await expect(page.getByRole('heading', { name: 'Completed (1)' })).toBeVisible();

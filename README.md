@@ -27,8 +27,8 @@ different filename inside `data/`.
 - `npm run dev` starts the development server.
 - `npm run build` creates a production build.
 - `npm run lint` runs ESLint.
-- `npm run test:unit` runs unit tests for authentication and todo date/sorting logic.
-- `npm run test:e2e` runs the Playwright authentication and todo CRUD suites.
+- `npm run test:unit` runs unit tests for authentication and todo validation/sorting logic.
+- `npm run test:e2e` runs the Playwright authentication, todo CRUD, and priority suites.
 
 Next.js 16 renamed the `middleware.ts` convention to `proxy.ts`; `proxy.ts`
 protects `/` and `/calendar` and redirects unauthenticated visitors to `/login`.

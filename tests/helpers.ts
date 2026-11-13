@@ -9,7 +9,7 @@ export interface TodoFields {
 export async function createTodo(page: Page, fields: TodoFields): Promise<void> {
   await page.getByLabel('Title').fill(fields.title);
   if (fields.priority) {
-    await page.getByLabel('Priority').selectOption(fields.priority);
+    await page.getByLabel('Priority', { exact: true }).selectOption(fields.priority);
   }
   if (fields.dueDate) {
     await page.getByLabel('Due date').fill(fields.dueDate);

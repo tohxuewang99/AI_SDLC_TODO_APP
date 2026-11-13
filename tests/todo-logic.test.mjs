@@ -5,7 +5,7 @@ import {
   parseSingaporeDateTime,
 } from '../lib/timezone.ts';
 import { sectionTodos, sortTodos } from '../lib/todo-logic.ts';
-import { normalizeTodoTitle } from '../lib/todo-validation.ts';
+import { normalizeTodoTitle, validatePriority } from '../lib/todo-validation.ts';
 
 const now = new Date('2026-11-13T06:00:00.000Z');
 
@@ -37,6 +37,21 @@ test('sorts todos by priority, due date, then newest creation time', () => {
   ];
 
   assert.deepEqual(sortTodos(todos).map((item) => item.id), [2, 4, 3, 1, 5]);
+  assert.notStrictEqual(sortTodos(todos), todos);
+  assert.deepEqual(todos.map((item) => item.id), [1, 2, 3, 4, 5]);
+});
+
+test('validates priority levels and applies the medium default', () => {
+  assert.equal(validatePriority('high'), 'high');
+  assert.equal(validatePriority('medium'), 'medium');
+  assert.equal(validatePriority('low'), 'low');
+  assert.equal(validatePriority(undefined), 'medium');
+  assert.equal(validatePriority(null), 'medium');
+  assert.throws(() => validatePriority('urgent'), {
+    message: "Invalid priority: urgent. Must be 'high', 'medium', or 'low'.",
+  });
+  assert.throws(() => validatePriority('HIGH'));
+  assert.throws(() => validatePriority(''));
 });
 
 test('sections todos at the due-time boundary and sorts completed newest first', () => {

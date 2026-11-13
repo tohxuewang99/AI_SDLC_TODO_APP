@@ -52,6 +52,25 @@ export interface Todo {
   last_notification_sent: string | null;
   created_at: string;
   updated_at: string | null;
+  subtasks?: Subtask[];
+}
+
+export interface Subtask {
+  id: number;
+  todo_id: number;
+  title: string;
+  completed: boolean;
+  position: number;
+  created_at: string;
+}
+
+export interface CreateSubtaskDto {
+  title: string;
+}
+
+export interface UpdateSubtaskDto {
+  title?: string;
+  completed?: boolean;
 }
 
 export interface CreateTodoInput {
@@ -117,6 +136,16 @@ function getDb(): Database.Database {
     CREATE INDEX IF NOT EXISTS idx_todos_user_id ON todos(user_id);
     CREATE INDEX IF NOT EXISTS idx_todos_due_date ON todos(due_date);
 
+    CREATE TABLE IF NOT EXISTS subtasks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      todo_id INTEGER NOT NULL REFERENCES todos(id) ON DELETE CASCADE,
+      title TEXT NOT NULL,
+      completed INTEGER NOT NULL DEFAULT 0,
+      position INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_subtasks_todo_id ON subtasks(todo_id);
+
     CREATE TABLE IF NOT EXISTS auth_challenges (
       username TEXT NOT NULL COLLATE NOCASE,
       purpose TEXT NOT NULL CHECK (purpose IN ('registration', 'authentication')),
@@ -152,11 +181,18 @@ function getDb(): Database.Database {
   return connection;
 }
 
-interface TodoRow extends Omit<Todo, 'completed' | 'is_recurring' | 'created_at' | 'updated_at'> {
+interface TodoRow extends Omit<
+  Todo,
+  'completed' | 'is_recurring' | 'created_at' | 'updated_at' | 'subtasks'
+> {
   completed: 0 | 1;
   is_recurring: 0 | 1;
   created_at: string;
   updated_at: string | null;
+}
+
+interface SubtaskRow extends Omit<Subtask, 'completed'> {
+  completed: 0 | 1;
 }
 
 function normalizeSqliteTimestamp(value: string | null): string | null {
@@ -175,6 +211,22 @@ function mapTodo(row: TodoRow): Todo {
     created_at: normalizeSqliteTimestamp(row.created_at) ?? row.created_at,
     updated_at: normalizeSqliteTimestamp(row.updated_at),
   };
+}
+
+function mapSubtask(row: SubtaskRow): Subtask {
+  return {
+    ...row,
+    completed: row.completed === 1,
+    created_at: normalizeSqliteTimestamp(row.created_at) ?? row.created_at,
+  };
+}
+
+function subtasksByTodoId(todoId: number): Subtask[] {
+  const rows = getDb().prepare(
+    `SELECT id, todo_id, title, completed, position, created_at
+     FROM subtasks WHERE todo_id = ? ORDER BY position ASC, id ASC`,
+  ).all(todoId) as SubtaskRow[];
+  return rows.map(mapSubtask);
 }
 
 export const userDB = {
@@ -217,16 +269,38 @@ export const userDB = {
 
 export const todoDB = {
   findAllByUser(userId: number, priority?: Priority): Todo[] {
-    const statement = getDb().prepare(
+    const database = getDb();
+    const priorityFilter = priority === undefined ? '' : ' AND priority = ?';
+    const parameters = priority === undefined ? [userId] : [userId, priority];
+    const rows = database.prepare(
       `SELECT id, user_id, title, completed, due_date, priority, is_recurring,
               recurrence_pattern, reminder_minutes, last_notification_sent,
               created_at, updated_at
-       FROM todos WHERE user_id = ?${priority === undefined ? '' : ' AND priority = ?'}`,
-    );
-    const rows = (priority
-      ? statement.all(userId, priority)
-      : statement.all(userId)) as TodoRow[];
-    return rows.map(mapTodo);
+       FROM todos WHERE user_id = ?${priorityFilter}`,
+    ).all(...parameters) as TodoRow[];
+    const todos = rows.map(mapTodo);
+    if (todos.length === 0) {
+      return todos;
+    }
+
+    const subtaskRows = database.prepare(
+      `SELECT subtasks.id, subtasks.todo_id, subtasks.title, subtasks.completed,
+              subtasks.position, subtasks.created_at
+       FROM subtasks
+       INNER JOIN todos ON todos.id = subtasks.todo_id
+       WHERE todos.user_id = ?${priorityFilter}
+       ORDER BY subtasks.todo_id, subtasks.position ASC, subtasks.id ASC`,
+    ).all(...parameters) as SubtaskRow[];
+    const subtasksByTodo = new Map<number, Subtask[]>();
+    for (const row of subtaskRows) {
+      const subtasks = subtasksByTodo.get(row.todo_id) ?? [];
+      subtasks.push(mapSubtask(row));
+      subtasksByTodo.set(row.todo_id, subtasks);
+    }
+    return todos.map((todo) => ({
+      ...todo,
+      subtasks: subtasksByTodo.get(todo.id) ?? [],
+    }));
   },
 
   findById(id: number): Todo | undefined {
@@ -236,7 +310,9 @@ export const todoDB = {
               created_at, updated_at
        FROM todos WHERE id = ?`,
     ).get(id) as TodoRow | undefined;
-    return row ? mapTodo(row) : undefined;
+    return row
+      ? { ...mapTodo(row), subtasks: subtasksByTodoId(id) }
+      : undefined;
   },
 
   create(userId: number, input: CreateTodoInput): Todo {
@@ -278,6 +354,61 @@ export const todoDB = {
 
   delete(id: number): boolean {
     return getDb().prepare('DELETE FROM todos WHERE id = ?').run(id).changes === 1;
+  },
+};
+
+export const subtaskDB = {
+  findByTodoId(todoId: number): Subtask[] {
+    return subtasksByTodoId(todoId);
+  },
+
+  findById(id: number): Subtask | undefined {
+    const row = getDb().prepare(
+      `SELECT id, todo_id, title, completed, position, created_at
+       FROM subtasks WHERE id = ?`,
+    ).get(id) as SubtaskRow | undefined;
+    return row ? mapSubtask(row) : undefined;
+  },
+
+  create(todoId: number, input: CreateSubtaskDto): Subtask {
+    const result = getDb().prepare(
+      `INSERT INTO subtasks (todo_id, title, position)
+       VALUES (?, ?, (
+         SELECT COALESCE(MAX(position) + 1, 0)
+         FROM subtasks WHERE todo_id = ?
+       ))`,
+    ).run(todoId, input.title, todoId);
+    const subtask = this.findById(Number(result.lastInsertRowid));
+    if (!subtask) {
+      throw new Error('Created subtask could not be read back');
+    }
+    return subtask;
+  },
+
+  update(id: number, input: UpdateSubtaskDto): Subtask | undefined {
+    const columns: { [K in keyof UpdateSubtaskDto]: string } = {
+      title: 'title',
+      completed: 'completed',
+    };
+    const entries = Object.entries(input).filter(
+      ([key, value]) => value !== undefined && Object.hasOwn(columns, key),
+    ) as [keyof UpdateSubtaskDto, UpdateSubtaskDto[keyof UpdateSubtaskDto]][];
+    if (entries.length === 0) {
+      return this.findById(id);
+    }
+
+    const assignments = entries.map(([key]) => `${columns[key]} = ?`);
+    const values = entries.map(([key, value]) => (
+      key === 'completed' ? Number(value) : value
+    ));
+    getDb().prepare(
+      `UPDATE subtasks SET ${assignments.join(', ')} WHERE id = ?`,
+    ).run(...values, id);
+    return this.findById(id);
+  },
+
+  delete(id: number): boolean {
+    return getDb().prepare('DELETE FROM subtasks WHERE id = ?').run(id).changes === 1;
   },
 };
 

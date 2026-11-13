@@ -19,6 +19,14 @@ title, priority, or due date; canceling or dismissing the edit leaves it
 unchanged. **Delete** removes a todo immediately. Todo data is private to the
 signed-in account.
 
+## Templates
+
+Save a draft or an existing todo as a template, then use **Use Template** or
+the **Templates** manager to create a fresh todo. Templates can include a
+checklist and an optional due-date offset in minutes; recurring templates and
+reminders require an offset. Tags are not copied. Deleting a template does not
+change todos already created from it.
+
 ## Reminders and browser notifications
 
 Choose **Enable Notifications** to opt in to the browser permission prompt.

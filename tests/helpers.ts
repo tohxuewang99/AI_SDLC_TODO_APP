@@ -14,7 +14,13 @@ export async function createTodo(page: Page, fields: TodoFields): Promise<void> 
   if (fields.dueDate) {
     await page.getByLabel('Due date').fill(fields.dueDate);
   }
+  const responsePromise = page.waitForResponse((response) => (
+    response.url().endsWith('/api/todos') && response.request().method() === 'POST'
+  ));
   await page.getByRole('button', { name: 'Add', exact: true }).click();
+  const response = await responsePromise;
+  expect(response.status()).toBe(201);
+  await expect(page.getByText(fields.title, { exact: true })).toBeVisible();
 }
 
 export async function createTag(
@@ -52,10 +58,16 @@ export async function addSubtask(
 
   const input = todo.getByLabel(`New subtask for ${todoTitle}`);
   await input.fill(subtaskTitle);
+  const responsePromise = page.waitForResponse((response) => (
+    /\/api\/todos\/\d+\/subtasks$/.test(response.url())
+      && response.request().method() === 'POST'
+  ));
   if (method === 'button') {
     await todo.getByRole('button', { name: 'Add subtask' }).click();
   } else {
     await input.press('Enter');
   }
+  const response = await responsePromise;
+  expect(response.status()).toBe(201);
   await expect(input).toHaveValue('');
 }

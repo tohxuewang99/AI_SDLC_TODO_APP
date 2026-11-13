@@ -14,6 +14,13 @@ ordered by completion time. Use the **Priority** filter to show one priority or
 choose **All Priorities** to show everything; changing a todo's priority updates
 the current list immediately.
 
+Use **Search** to find text in todo or subtask titles; matching ignores case and
+updates after a short pause. Combine search with the **Priority** and **Tags**
+filters. **Advanced** adds completion and due-date range filters. Active filters
+can be cleared together or saved as named presets in this browser; saved presets
+are not synced to other devices. Empty sections are hidden, and the page
+distinguishes an empty todo list from a filter with no matches.
+
 Use the checkbox to complete or reopen a todo. Choose **Edit** to change its
 title, priority, or due date; canceling or dismissing the edit leaves it
 unchanged. **Delete** removes a todo immediately. Todo data is private to the

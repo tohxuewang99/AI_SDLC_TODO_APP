@@ -8,10 +8,10 @@ import { generateCalendarGrid } from './calendar.ts';
 export { PRIORITY_ORDER, PRIORITY_VALUES } from './priority.ts';
 export type { Priority } from './priority';
 import { calculateNextDueDate } from './recurrence.ts';
-import { isReminderDue } from './reminders';
+import { isReminderDue } from './reminders.ts';
 
-export { REMINDER_LABELS } from './reminders';
-export type { ReminderMinutes } from './reminders';
+export { REMINDER_LABELS } from './reminders.ts';
+export type { ReminderMinutes } from './reminders.ts';
 
 export interface User {
   id: number;

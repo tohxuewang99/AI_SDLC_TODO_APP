@@ -156,6 +156,37 @@ test('toggles completion and deletes a todo without confirmation', async ({ page
   expect(await response.json()).toHaveLength(0);
 });
 
+test('a delayed completion response cannot restore a deleted todo', async ({ page }) => {
+  await register(page);
+  const created = await page.request.post('/api/todos', { data: { title: 'Delete during completion' } });
+  expect(created.status()).toBe(201);
+  await page.reload();
+  let release = () => {};
+  let processed = () => {};
+  const pending = new Promise<void>((resolve) => { release = resolve; });
+  const completed = new Promise<void>((resolve) => { processed = resolve; });
+  await page.route('**/api/todos/*', async (route) => {
+    if (route.request().method() !== 'PUT') {
+      await route.continue();
+      return;
+    }
+    const response = await route.fetch();
+    processed();
+    await pending;
+    await route.fulfill({ response });
+  });
+  await page.getByLabel('Mark "Delete during completion" as complete').click();
+  await completed;
+  await page.getByRole('button', { name: 'Delete', exact: true }).click();
+  await expect(page.getByText('Delete during completion')).toHaveCount(0);
+  const response = page.waitForResponse((response) => response.request().method() === 'PUT');
+  release();
+  await (await response).finished();
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+  await expect(page.getByText('Delete during completion')).toHaveCount(0);
+  expect(await (await page.request.get('/api/todos')).json()).toHaveLength(0);
+});
+
 test('does not expose another account’s todo', async ({ page }) => {
   const firstUser = await register(page);
   await createTodo(page, { title: 'Private task' });

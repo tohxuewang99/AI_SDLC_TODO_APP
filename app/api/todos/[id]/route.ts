@@ -71,6 +71,9 @@ export async function PUT(request: NextRequest, { params }: RouteContext) {
     }
     return NextResponse.json(result);
   } catch (error) {
+    if (error instanceof Error && error.message === 'Reminder settings changed') {
+      return NextResponse.json({ error: error.message }, { status: 409 });
+    }
     if (error instanceof Error && error.message === 'Tag not found') {
       return NextResponse.json({ error: 'Tag not found' }, { status: 404 });
     }

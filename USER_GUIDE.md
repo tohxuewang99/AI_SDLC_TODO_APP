@@ -19,6 +19,30 @@ title, priority, or due date; canceling or dismissing the edit leaves it
 unchanged. **Delete** removes a todo immediately. Todo data is private to the
 signed-in account.
 
+## Reminders and browser notifications
+
+Choose **Enable Notifications** to opt in to the browser permission prompt.
+With permission granted, **Notifications On** is shown and the app checks
+reminders every 30 seconds while the home page is open. In browsers without
+notification support the control is disabled; blocked permission must be changed
+in this site's browser settings.
+
+Set a due date to enable **Reminder** in the add form or editor. Choose None,
+15 minutes, 30 minutes, 1 hour, 2 hours, 1 day, 2 days, or 1 week before due.
+The bell badge shows 15m, 30m, 1h, 2h, 1d, 2d, or 1w. Removing a due date also
+removes its reminder. Changing the due date or reminder timing resets delivery
+state so the new window can notify again; recurring instances inherit timing
+but start with fresh delivery state.
+
+Following PRP 00's bounded window, reminders are eligible from the selected
+offset through the due time, inclusive; reminders missed after that are not
+delivered. There is no service worker or server push: a closed tab/browser cannot
+deliver reminders, and background-tab throttling can delay the 30-second check.
+The browser/OS decides notification persistence. Server-side delivery stamps
+prevent repeat polling alerts after acknowledgement; multiple tabs can race
+before acknowledgement, so exactly-once delivery is best effort, not guaranteed.
+Delivery failures appear on the page and are retried at the next polling tick.
+
 ## Passkey accounts
 
 This app uses WebAuthn passkeys only. It does not store passwords. A passkey may

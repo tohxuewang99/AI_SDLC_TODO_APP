@@ -19,6 +19,9 @@ import {
 } from '@/lib/timezone';
 import { calculateProgress } from '@/lib/subtask-logic';
 import { sectionTodos } from '@/lib/todo-logic';
+import ReminderSelect from '@/app/reminder-select';
+import { useNotifications } from '@/lib/hooks/useNotifications';
+import { isReminderMinutes, REMINDER_LABELS } from '@/lib/reminders';
 
 const PRIORITY_BADGE_STYLES: Record<Todo['priority'], string> = {
   high: 'border-[#EF4444] bg-red-100 text-red-800 dark:border-[#F87171] dark:bg-red-950 dark:text-[#F87171]',
@@ -42,6 +45,7 @@ interface EditValues {
   priority: Todo['priority'];
   isRecurring: boolean;
   recurrencePattern: RecurrencePattern;
+  reminderMinutes: number | null;
 }
 
 function PriorityBadge({ priority }: { priority: Todo['priority'] }) {
@@ -123,6 +127,14 @@ function TodoSection({
                 <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-slate-500">
                   <PriorityBadge priority={todo.priority} />
                   {todo.due_date && <span>Due {formatSingaporeDateTime(todo.due_date)}</span>}
+                  {isReminderMinutes(todo.reminder_minutes) && (
+                    <span
+                      aria-label={`Reminder ${REMINDER_LABELS[todo.reminder_minutes]}`}
+                      className="rounded-full border border-orange-300 bg-orange-100 px-2 py-0.5 text-xs text-orange-800"
+                    >
+                      🔔 {REMINDER_LABELS[todo.reminder_minutes]}
+                    </span>
+                  )}
                   {todo.is_recurring && todo.recurrence_pattern && (
                     <span className="inline-flex items-center rounded-full border border-purple-300 bg-purple-100 px-2 py-0.5 text-xs font-medium text-purple-800">
                       🔄 {todo.recurrence_pattern}
@@ -320,6 +332,8 @@ export default function TodoClient({ initialTodos, userId, initialNow }: TodoCli
   const [dueDate, setDueDate] = useState('');
   const [isRecurring, setIsRecurring] = useState(false);
   const [recurrencePattern, setRecurrencePattern] = useState<RecurrencePattern>('daily');
+  const [reminderMinutes, setReminderMinutes] = useState<number | null>(null);
+  const notifications = useNotifications();
   const [error, setError] = useState<string | null>(null);
   const [editingTodo, setEditingTodo] = useState<Todo | null>(null);
   const [editValues, setEditValues] = useState<EditValues | null>(null);
@@ -359,6 +373,7 @@ export default function TodoClient({ initialTodos, userId, initialNow }: TodoCli
       due_date: parsedDueDate ? toSingaporeIsoString(parsedDueDate) : null,
       is_recurring: isRecurring,
       recurrence_pattern: isRecurring ? recurrencePattern : null,
+      reminder_minutes: reminderMinutes,
     };
     const optimisticId = -Date.now() - nextOptimisticId.current;
     nextOptimisticId.current += 1;
@@ -371,7 +386,7 @@ export default function TodoClient({ initialTodos, userId, initialNow }: TodoCli
       priority: input.priority ?? 'medium',
       is_recurring: false,
       recurrence_pattern: null,
-      reminder_minutes: null,
+      reminder_minutes: reminderMinutes,
       last_notification_sent: null,
       created_at: new Date().toISOString(),
       updated_at: null,
@@ -383,6 +398,7 @@ export default function TodoClient({ initialTodos, userId, initialNow }: TodoCli
     setPriority('medium');
     setIsRecurring(false);
     setRecurrencePattern('daily');
+    setReminderMinutes(null);
 
     try {
       const saved = await requestJson<Todo>('/api/todos', 'POST', input);
@@ -397,6 +413,7 @@ export default function TodoClient({ initialTodos, userId, initialNow }: TodoCli
       setPriority(input.priority ?? 'medium');
       setIsRecurring(input.is_recurring ?? false);
       setRecurrencePattern(input.recurrence_pattern ?? 'daily');
+      setReminderMinutes(input.reminder_minutes ?? null);
     }
   }
 
@@ -408,11 +425,13 @@ export default function TodoClient({ initialTodos, userId, initialNow }: TodoCli
     try {
       const result = await requestJson<TodoUpdateResult>(`/api/todos/${todo.id}`, 'PUT', { completed });
       setTodos((current) => {
+        const stillPresent = current.some((item) => item.id === result.todo.id);
         const updatedIds = new Set([result.todo.id, result.nextInstance?.id]);
         const remaining = current.filter((item) => !updatedIds.has(item.id));
+        const updated = stillPresent ? [...remaining, result.todo] : remaining;
         return result.nextInstance
-          ? [...remaining, result.todo, result.nextInstance]
-          : [...remaining, result.todo];
+          ? [...updated, result.nextInstance]
+          : updated;
       });
     } catch (requestError) {
       setTodos((current) => current.map((item) => (item.id === todo.id ? todo : item)));
@@ -563,6 +582,7 @@ export default function TodoClient({ initialTodos, userId, initialNow }: TodoCli
       priority: todo.priority,
       isRecurring: todo.is_recurring,
       recurrencePattern: todo.recurrence_pattern ?? 'daily',
+      reminderMinutes: todo.reminder_minutes,
     });
   }
 
@@ -602,6 +622,9 @@ export default function TodoClient({ initialTodos, userId, initialNow }: TodoCli
     }
     if (editValues.priority !== editingTodo.priority) {
       updates.priority = editValues.priority;
+    }
+    if (editValues.reminderMinutes !== editingTodo.reminder_minutes) {
+      updates.reminder_minutes = editValues.reminderMinutes;
     }
     if (editValues.isRecurring !== editingTodo.is_recurring) {
       updates.is_recurring = editValues.isRecurring;
@@ -737,11 +760,23 @@ export default function TodoClient({ initialTodos, userId, initialNow }: TodoCli
           <input
             aria-label="Edit due date"
             className="w-full rounded-xl border border-slate-300 px-3 py-2"
-            onChange={(event) => setEditValues({ ...editValues, dueDate: event.target.value })}
+            onChange={(event) => setEditValues({
+              ...editValues,
+              dueDate: event.target.value,
+              reminderMinutes: event.target.value ? editValues.reminderMinutes : null,
+            })}
             type="datetime-local"
             value={editValues.dueDate}
           />
         </label>
+        <div className="mt-4">
+          <ReminderSelect
+            label="Edit reminder"
+            value={editValues.reminderMinutes}
+            disabled={!editValues.dueDate}
+            onChange={(value) => setEditValues({ ...editValues, reminderMinutes: value })}
+          />
+        </div>
         <div className="mt-6 flex justify-end gap-3">
           <button
             className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700"
@@ -765,6 +800,28 @@ export default function TodoClient({ initialTodos, userId, initialNow }: TodoCli
 
   return (
     <div className="mt-10">
+      <div className="mb-6 flex flex-col items-end gap-2">
+        <button
+          className={notifications.permission === 'granted'
+            ? 'rounded-xl bg-green-100 px-4 py-2 text-sm font-semibold text-green-800'
+            : 'rounded-xl bg-orange-500 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60'}
+          disabled={notifications.permission === 'granted' || notifications.permission === 'unsupported'}
+          onClick={() => void notifications.requestPermission()}
+          type="button"
+        >
+          {notifications.permission === 'granted'
+            ? '🔔 Notifications On'
+            : notifications.permission === 'unsupported'
+              ? 'Notifications unavailable'
+              : '🔔 Enable Notifications'}
+        </button>
+        {notifications.permission === 'denied' && (
+          <p className="text-sm text-orange-800">Notifications are blocked. Allow them in this site&apos;s browser settings.</p>
+        )}
+        {notifications.error && (
+          <p className="text-sm text-red-700" role="alert">{notifications.error}</p>
+        )}
+      </div>
       <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
         <h2 className="text-xl font-semibold text-slate-950">Add a todo</h2>
         <form className="mt-5 grid gap-4 sm:grid-cols-2" onSubmit={addTodo}>
@@ -798,12 +855,20 @@ export default function TodoClient({ initialTodos, userId, initialNow }: TodoCli
             <input
               aria-label="Due date"
               className="w-full rounded-xl border border-slate-300 px-3 py-2"
-              onChange={(event) => setDueDate(event.target.value)}
+              onChange={(event) => {
+                setDueDate(event.target.value);
+                if (!event.target.value) setReminderMinutes(null);
+              }}
               type="datetime-local"
               value={dueDate}
             />
             <span className="mt-1 block text-xs text-slate-500">Singapore time (optional)</span>
           </label>
+          <ReminderSelect
+            value={reminderMinutes}
+            disabled={!dueDate}
+            onChange={setReminderMinutes}
+          />
           <div className="flex flex-col justify-center gap-2">
             <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
               <input

@@ -7,7 +7,7 @@ import { generateCalendarGrid } from './calendar.ts';
 
 export { PRIORITY_ORDER, PRIORITY_VALUES } from './priority.ts';
 export type { Priority } from './priority';
-import { calculateNextDueDate } from '@/lib/recurrence';
+import { calculateNextDueDate } from './recurrence.ts';
 import { isReminderDue } from './reminders';
 
 export { REMINDER_LABELS } from './reminders';

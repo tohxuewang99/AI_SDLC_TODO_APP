@@ -65,10 +65,6 @@ export function getSingaporeNow(): Date {
   return new Date();
 }
 
-export function formatSingaporeDate(value: Date): string {
-  return toSingaporeIsoString(value).slice(0, 10);
-}
-
 // UTC is used only as a host-timezone-independent carrier for calendar arithmetic.
 export function singaporeCalendarDate(year: number, month: number, day: number): Date {
   const date = new Date(0);

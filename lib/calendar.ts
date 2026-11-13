@@ -30,7 +30,7 @@ export function parseMonthParam(raw: string | null, now = getSingaporeNow()): Ca
     const [year, month] = raw.split('-').map(Number);
     if (year >= 1 && month >= 1 && month <= 12) return { year, month };
   }
-  const [year, month] = formatSingaporeDate(now).split('-').map(Number);
+  const [year, month] = formatSingaporeDate(now, 'yyyy-MM-dd').split('-').map(Number);
   return { year, month };
 }
 
@@ -44,10 +44,10 @@ export function generateCalendarGrid(year: number, month: number, now = getSinga
     throw new RangeError('Calendar year and month must be valid integers');
   }
   const leading = singaporeWeekday(singaporeCalendarDate(year, month, 1));
-  const today = formatSingaporeDate(now);
+  const today = formatSingaporeDate(now, 'yyyy-MM-dd');
   const currentMonth = monthKey({ year, month });
   return Array.from({ length: 42 }, (_, index) => {
-    const date = formatSingaporeDate(singaporeCalendarDate(year, month, index - leading + 1));
+    const date = formatSingaporeDate(singaporeCalendarDate(year, month, index - leading + 1), 'yyyy-MM-dd');
     return {
       date,
       isCurrentMonth: date.slice(0, 7) === currentMonth,
@@ -64,7 +64,7 @@ export function groupCalendarTodos(todos: Todo[]): Map<string, Todo[]> {
     if (!todo.due_date) continue;
     const parsed = parseSingaporeDateTime(todo.due_date);
     if (!parsed) throw new Error(`Todo ${todo.id} has an invalid due date`);
-    const key = formatSingaporeDate(parsed);
+    const key = formatSingaporeDate(parsed, 'yyyy-MM-dd');
     const group = groups.get(key) ?? [];
     group.push(todo);
     groups.set(key, group);

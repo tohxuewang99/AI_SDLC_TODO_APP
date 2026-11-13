@@ -63,7 +63,7 @@ test('opens current Singapore month, navigates year boundaries, preserves URL an
   await expect(page.locator('tbody tr')).toHaveCount(6);
   await expect(page.locator('tbody td')).toHaveCount(42);
   await expect(page.locator('th')).toHaveText(['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']);
-  await expect(page.locator('[aria-current="date"]')).toHaveAttribute('data-date', formatSingaporeDate(getSingaporeNow()));
+  await expect(page.locator('[aria-current="date"]')).toHaveAttribute('data-date', formatSingaporeDate(getSingaporeNow(), 'yyyy-MM-dd'));
   const historyLength = await page.evaluate(() => history.length);
   await page.getByRole('button', { name: 'Previous month' }).click();
   await expect(page).toHaveURL(`/calendar?month=${monthKey(moveMonth(current, -1))}`);

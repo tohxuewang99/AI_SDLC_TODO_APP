@@ -46,12 +46,12 @@ test('calendar grids always have 42 unique consecutive Sun-Sat cells', () => {
 
 test('today and past flags use Singapore date even when UTC is yesterday', () => {
   const grid = generateCalendarGrid(2026, 3, boundary);
-  assert.equal(formatSingaporeDate(boundary), '2026-03-01');
+  assert.equal(formatSingaporeDate(boundary, 'yyyy-MM-dd'), '2026-03-01');
   assert.deepEqual(grid.filter((day) => day.isToday).map((day) => day.date), ['2026-03-01']);
   assert.equal(grid[0].isPast, false);
   assert.equal(generateCalendarGrid(2026, 2, boundary).find((day) => day.date === '2026-02-28').isPast, true);
   assert.equal(generateCalendarGrid(2028, 2, boundary).some((day) => day.isToday), false);
-  assert.equal(formatSingaporeDate(singaporeCalendarDate(99, 2, 1)), '0099-02-01');
+  assert.equal(formatSingaporeDate(singaporeCalendarDate(99, 2, 1), 'yyyy-MM-dd'), '0099-02-01');
 });
 
 test('month parsing rejects malformed/out-of-range input and navigation crosses years', () => {
@@ -88,7 +88,7 @@ test('holiday seed dates are unique, valid and cover 2025 through 2027', () => {
   assert.deepEqual([...new Set(SINGAPORE_HOLIDAYS.map((day) => day.date.slice(0, 4)))], ['2025', '2026', '2027']);
   for (const holiday of SINGAPORE_HOLIDAYS) {
     const [year, month, day] = holiday.date.split('-').map(Number);
-    assert.equal(formatSingaporeDate(singaporeCalendarDate(year, month, day)), holiday.date);
+    assert.equal(formatSingaporeDate(singaporeCalendarDate(year, month, day), 'yyyy-MM-dd'), holiday.date);
     assert.ok(holiday.name);
   }
 });

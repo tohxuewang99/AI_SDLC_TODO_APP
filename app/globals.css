@@ -1,0 +1,14 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: light;
+}
+
+body {
+  min-height: 100%;
+  background:
+    radial-gradient(ellipse at top left, rgb(224 231 255 / 90%), transparent 48%),
+    linear-gradient(135deg, #f8fafc, #eef2ff);
+  color: #0f172a;
+  font-family: Arial, Helvetica, sans-serif;
+}

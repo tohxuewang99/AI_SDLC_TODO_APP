@@ -1,5 +1,17 @@
 # Todo App User Guide
 
+## Todos
+
+The home page lists your todos in **Overdue**, **Pending**, and **Completed**
+sections. Add a todo with a title; priority defaults to Medium, and a due date
+is optional. Due dates are entered and shown in Singapore time, and new due
+dates must be at least one minute in the future.
+
+Use the checkbox to complete or reopen a todo. Choose **Edit** to change its
+title, priority, or due date; canceling or dismissing the edit leaves it
+unchanged. **Delete** removes a todo immediately. Todo data is private to the
+signed-in account.
+
 ## Passkey accounts
 
 This app uses WebAuthn passkeys only. It does not store passwords. A passkey may

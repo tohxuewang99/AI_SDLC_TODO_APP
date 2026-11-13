@@ -1,6 +1,9 @@
 import { redirect } from 'next/navigation';
 import AuthenticatedControls from '@/app/authenticated-controls';
 import { getSession } from '@/lib/auth';
+import TodoClient from '@/app/todo-client';
+import { todoDB } from '@/lib/db';
+import { getSingaporeNow } from '@/lib/timezone';
 
 export const instant = false;
 
@@ -23,19 +26,11 @@ export default async function Home() {
         </div>
         <AuthenticatedControls username={session.username} />
       </header>
-      <section className="mt-10 rounded-3xl border border-slate-200 bg-white p-8 shadow-sm">
-        <h2 className="text-xl font-semibold text-slate-950">Passkey account</h2>
-        <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
-          Your account is protected with passkeys. Add a second device now so you
-          have another way to sign in if your primary device is unavailable.
-        </p>
-        <a
-          className="mt-6 inline-flex rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-50"
-          href="/calendar"
-        >
-          Open calendar
-        </a>
-      </section>
+      <TodoClient
+        initialNow={getSingaporeNow().toISOString()}
+        initialTodos={todoDB.findAllByUser(session.userId)}
+        userId={session.userId}
+      />
     </main>
   );
 }

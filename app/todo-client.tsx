@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import type {
   CreateTodoInput,
   RecurrencePattern,
@@ -27,6 +27,9 @@ import ExportImportToolbar from '@/app/export-import-toolbar';
 import { useNotifications } from '@/lib/hooks/useNotifications';
 import { isReminderMinutes, REMINDER_LABELS } from '@/lib/reminders';
 import { PRIORITY_BADGE_STYLES } from '@/lib/priority-styles';
+import { applyFilters, DEFAULT_FILTER_STATE, hasActiveFilters, type FilterState } from '@/lib/filters';
+import { deletePreset, loadPresets, savePreset, type FilterPreset } from '@/lib/filter-presets';
+import { useDebounce } from '@/lib/hooks/useDebounce';
 
 interface TodoClientProps {
   initialTodos: Todo[];
@@ -648,8 +651,13 @@ export default function TodoClient({ initialTodos, initialTags, userId, initialN
   const [now, setNow] = useState(() => new Date(initialNow));
   const [title, setTitle] = useState('');
   const [priority, setPriority] = useState<Todo['priority']>('medium');
-  const [priorityFilter, setPriorityFilter] = useState<Todo['priority'] | 'all'>('all');
-  const [tagFilter, setTagFilter] = useState<number | 'all'>('all');
+  const [filters, setFilters] = useState<FilterState>(DEFAULT_FILTER_STATE);
+  const debouncedSearch = useDebounce(filters.search, 300);
+  const [advancedExpanded, setAdvancedExpanded] = useState(false);
+  const [presets, setPresets] = useState<FilterPreset[]>([]);
+  const [showPresetDialog, setShowPresetDialog] = useState(false);
+  const [presetName, setPresetName] = useState('');
+  const [presetError, setPresetError] = useState<string | null>(null);
   const [selectedTagIds, setSelectedTagIds] = useState<number[]>([]);
   const [dueDate, setDueDate] = useState('');
   const [isRecurring, setIsRecurring] = useState(false);
@@ -671,13 +679,81 @@ export default function TodoClient({ initialTodos, initialTags, userId, initialN
     return () => window.clearInterval(timer);
   }, []);
 
-  const priorityFilteredTodos = priorityFilter === 'all'
-    ? todos
-    : todos.filter((todo) => todo.priority === priorityFilter);
-  const filteredTodos = tagFilter === 'all'
-    ? priorityFilteredTodos
-    : priorityFilteredTodos.filter((todo) => todo.tags?.some((tag) => tag.id === tagFilter));
-  const sections = sectionTodos(filteredTodos, now);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setPresets(loadPresets()), 0);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  const activeFilters = useMemo(
+    () => ({
+      ...filters,
+      tagId: filters.tagId !== 'all' && !tags.some((tag) => tag.id === filters.tagId)
+        ? 'all'
+        : filters.tagId,
+    }),
+    [filters, tags],
+  );
+
+  const filtersForResults = useMemo(
+    () => ({
+      ...activeFilters,
+      search: filters.search.trim() === '' ? '' : debouncedSearch,
+    }),
+    [activeFilters, filters.search, debouncedSearch],
+  );
+  const filteredTodos = useMemo(
+    () => applyFilters(todos, filtersForResults),
+    [todos, filtersForResults],
+  );
+  const sections = useMemo(() => sectionTodos(filteredTodos, now), [filteredTodos, now]);
+
+  function updateFilter<K extends keyof FilterState>(key: K, value: FilterState[K]) {
+    setFilters((current) => ({ ...current, [key]: value }));
+  }
+
+  function selectTagFilter(tagId: number) {
+    updateFilter('tagId', tagId);
+  }
+
+  function applyPreset(preset: FilterPreset) {
+    setFilters({
+      ...preset.filters,
+      tagId: preset.filters.tagId !== 'all' && !tags.some((tag) => tag.id === preset.filters.tagId)
+        ? 'all'
+        : preset.filters.tagId,
+    });
+  }
+
+  function saveCurrentPreset(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const trimmedName = presetName.trim();
+    if (!trimmedName) return;
+
+    setPresetError(null);
+    const preset: FilterPreset = {
+      id: crypto.randomUUID(),
+      name: trimmedName,
+      filters: { ...activeFilters },
+      createdAt: getSingaporeNow().toISOString(),
+    };
+    try {
+      setPresets(savePreset(preset));
+      setPresetName('');
+      setShowPresetDialog(false);
+    } catch (saveError) {
+      setPresetError(saveError instanceof Error ? saveError.message : 'Could not save preset.');
+    }
+  }
+
+  function removePreset(preset: FilterPreset) {
+    if (!window.confirm(`Delete the "${preset.name}" filter preset?`)) return;
+    setPresetError(null);
+    try {
+      setPresets(deletePreset(preset.id));
+    } catch (deleteError) {
+      setPresetError(deleteError instanceof Error ? deleteError.message : 'Could not delete preset.');
+    }
+  }
 
   async function refreshAfterImport() {
     const [updatedTodos, updatedTags] = await Promise.all([
@@ -780,7 +856,7 @@ export default function TodoClient({ initialTodos, initialTags, userId, initialN
       tags: (todo.tags ?? []).filter((tag) => tag.id !== tagId),
     })));
     setSelectedTagIds((current) => current.filter((id) => id !== tagId));
-    setTagFilter((current) => (current === tagId ? 'all' : current));
+    setFilters((current) => (current.tagId === tagId ? { ...current, tagId: 'all' } : current));
   }
 
   async function toggleTodo(todo: Todo, completed: boolean) {
@@ -1327,43 +1403,171 @@ export default function TodoClient({ initialTodos, initialTags, userId, initialN
 
       {error && <p className="mt-4 text-sm text-red-700" role="alert">{error}</p>}
 
-      <div className="mt-8 flex flex-wrap gap-4">
-        <label className="flex w-fit items-center gap-3 text-sm font-medium text-slate-700">
-          <span>Priority</span>
-          <select
-            aria-label="Priority filter"
-            className="rounded-xl border border-slate-300 bg-white px-3 py-2"
-            onChange={(event) => setPriorityFilter(event.target.value as Todo['priority'] | 'all')}
-            value={priorityFilter}
+      <section aria-label="Todo filters" className="mt-8 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-end">
+          <label className="min-w-60 flex-1 text-sm font-medium text-slate-700">
+            <span className="mb-1 block">Search</span>
+            <span className="relative block">
+              <span aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">🔍</span>
+              <input
+                className="w-full rounded-xl border border-slate-300 bg-white py-2 pl-10 pr-10"
+                onChange={(event) => updateFilter('search', event.target.value)}
+                placeholder="Search todos and subtasks..."
+                type="text"
+                value={filters.search}
+              />
+              {filters.search && (
+                <button
+                  aria-label="Clear search"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700"
+                  onClick={() => updateFilter('search', '')}
+                  type="button"
+                >
+                  ✕
+                </button>
+              )}
+            </span>
+          </label>
+          <label className="flex w-fit items-center gap-3 text-sm font-medium text-slate-700">
+            <span>Priority</span>
+            <select
+              aria-label="Priority filter"
+              className="rounded-xl border border-slate-300 bg-white px-3 py-2"
+              onChange={(event) => updateFilter('priority', event.target.value as FilterState['priority'])}
+              value={activeFilters.priority}
+            >
+              <option value="all">All Priorities</option>
+              <option value="high">High Priority</option>
+              <option value="medium">Medium Priority</option>
+              <option value="low">Low Priority</option>
+            </select>
+          </label>
+          {tags.length > 0 && (
+            <label className="flex w-fit items-center gap-3 text-sm font-medium text-slate-700">
+              <span>Tags</span>
+              <select
+                aria-label="Tag filter"
+                className="rounded-xl border border-slate-300 bg-white px-3 py-2"
+                onChange={(event) => updateFilter('tagId', event.target.value === 'all' ? 'all' : Number(event.target.value))}
+                value={activeFilters.tagId}
+              >
+                <option value="all">All Tags</option>
+                {tags.map((tag) => (
+                  <option key={tag.id} value={tag.id}>{tag.name}</option>
+                ))}
+              </select>
+            </label>
+          )}
+          <button
+            aria-expanded={advancedExpanded}
+            className={`rounded-xl px-3 py-2 text-sm font-medium ${
+              advancedExpanded
+                ? 'bg-blue-600 text-white'
+                : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+            }`}
+            onClick={() => setAdvancedExpanded((expanded) => !expanded)}
+            type="button"
           >
-            <option value="all">All Priorities</option>
-            <option value="high">High Priority</option>
-            <option value="medium">Medium Priority</option>
-            <option value="low">Low Priority</option>
-          </select>
-        </label>
-        <label className="flex w-fit items-center gap-3 text-sm font-medium text-slate-700">
-          <span>Tags</span>
-          <select
-            aria-label="Tag filter"
-            className="rounded-xl border border-slate-300 bg-white px-3 py-2"
-            onChange={(event) => setTagFilter(event.target.value === 'all' ? 'all' : Number(event.target.value))}
-            value={tagFilter}
-          >
-            <option value="all">All Tags</option>
-            {tags.map((tag) => (
-              <option key={tag.id} value={tag.id}>{tag.name}</option>
-            ))}
-          </select>
-        </label>
-      </div>
+            {advancedExpanded ? '▼ Advanced' : '▶ Advanced'}
+          </button>
+        </div>
+        {hasActiveFilters(activeFilters) && (
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <button
+              className="text-sm font-medium text-red-700 hover:text-red-900"
+              onClick={() => setFilters(DEFAULT_FILTER_STATE)}
+              type="button"
+            >
+              Clear All
+            </button>
+            <button
+              className="text-sm font-medium text-green-700 hover:text-green-900"
+              onClick={() => {
+                setPresetError(null);
+                setPresetName('');
+                setShowPresetDialog(true);
+              }}
+              type="button"
+            >
+              💾 Save Filter
+            </button>
+          </div>
+        )}
+        {advancedExpanded && (
+          <div className="mt-4 grid gap-4 border-t border-slate-200 pt-4 sm:grid-cols-2 lg:grid-cols-4">
+            <label className="text-sm font-medium text-slate-700">
+              <span className="mb-1 block">Completion Status</span>
+              <select
+                aria-label="Completion Status"
+                className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2"
+                onChange={(event) => updateFilter('completion', event.target.value as FilterState['completion'])}
+                value={activeFilters.completion}
+              >
+                <option value="all">All Todos</option>
+                <option value="incomplete">Incomplete Only</option>
+                <option value="completed">Completed Only</option>
+              </select>
+            </label>
+            <label className="text-sm font-medium text-slate-700">
+              <span className="mb-1 block">Due Date From</span>
+              <input
+                aria-label="Due Date From"
+                className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2"
+                onChange={(event) => updateFilter('dueDateFrom', event.target.value || null)}
+                type="date"
+                value={activeFilters.dueDateFrom ?? ''}
+              />
+            </label>
+            <label className="text-sm font-medium text-slate-700">
+              <span className="mb-1 block">Due Date To</span>
+              <input
+                aria-label="Due Date To"
+                className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2"
+                onChange={(event) => updateFilter('dueDateTo', event.target.value || null)}
+                type="date"
+                value={activeFilters.dueDateTo ?? ''}
+              />
+            </label>
+            {presets.length > 0 && (
+              <div className="sm:col-span-2 lg:col-span-4">
+                <h3 className="mb-2 text-sm font-medium text-slate-700">Saved filters</h3>
+                <div className="flex flex-wrap gap-2">
+                  {presets.map((preset) => (
+                    <span
+                      className="inline-flex items-center gap-1 rounded-full border border-slate-300 px-3 py-1 text-sm"
+                      key={preset.id}
+                    >
+                      <button
+                        className="font-medium text-slate-800 hover:text-indigo-700"
+                        onClick={() => applyPreset(preset)}
+                        type="button"
+                      >
+                        {preset.name}
+                      </button>
+                      <button
+                        aria-label={`Delete preset ${preset.name}`}
+                        className="text-slate-400 hover:text-red-600"
+                        onClick={() => removePreset(preset)}
+                        type="button"
+                      >
+                        ✕
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+        {presetError && <p className="mt-3 text-sm text-red-700" role="alert">{presetError}</p>}
+      </section>
       <TodoSection
         title="Overdue"
         todos={sections.overdue}
         onToggle={toggleTodo}
         onEdit={openEdit}
         onDelete={deleteTodo}
-        onTagClick={setTagFilter}
+        onTagClick={selectTagFilter}
         onSaveTemplate={(todo) => templateControls.current?.saveTodo(todo)}
         onAddSubtask={addSubtask}
         onToggleSubtask={toggleSubtask}
@@ -1377,7 +1581,7 @@ export default function TodoClient({ initialTodos, initialTags, userId, initialN
         onToggle={toggleTodo}
         onEdit={openEdit}
         onDelete={deleteTodo}
-        onTagClick={setTagFilter}
+        onTagClick={selectTagFilter}
         onSaveTemplate={(todo) => templateControls.current?.saveTodo(todo)}
         onAddSubtask={addSubtask}
         onToggleSubtask={toggleSubtask}
@@ -1391,7 +1595,7 @@ export default function TodoClient({ initialTodos, initialTags, userId, initialN
         onToggle={toggleTodo}
         onEdit={openEdit}
         onDelete={deleteTodo}
-        onTagClick={setTagFilter}
+        onTagClick={selectTagFilter}
         onSaveTemplate={(todo) => templateControls.current?.saveTodo(todo)}
         onAddSubtask={addSubtask}
         onToggleSubtask={toggleSubtask}
@@ -1403,9 +1607,59 @@ export default function TodoClient({ initialTodos, initialTags, userId, initialN
         <p className="mt-8 text-center text-sm text-slate-500">No todos yet. Add one above.</p>
       )}
       {todos.length > 0 && filteredTodos.length === 0 && (
-        <p className="mt-8 text-center text-sm text-slate-500">
-          {tagFilter === 'all' ? 'No todos match this priority.' : 'No todos match the selected filters.'}
-        </p>
+        <p className="mt-8 text-center text-sm text-slate-500">No todos match your filters.</p>
+      )}
+
+      {showPresetDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4">
+          <section
+            aria-labelledby="save-filter-title"
+            aria-modal="true"
+            className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl"
+            role="dialog"
+          >
+            <h2 className="text-xl font-semibold text-slate-950" id="save-filter-title">Save Filter</h2>
+            <p className="mt-3 rounded-xl bg-slate-50 p-3 text-sm text-slate-700">
+              {[
+                activeFilters.search.trim() && `Search: "${activeFilters.search.trim()}"`,
+                activeFilters.priority !== 'all' && `Priority: ${activeFilters.priority[0].toUpperCase()}${activeFilters.priority.slice(1)}`,
+                activeFilters.tagId !== 'all' && `Tag: ${tags.find((tag) => tag.id === activeFilters.tagId)?.name ?? 'All Tags'}`,
+                activeFilters.completion !== 'all' && `Completion: ${activeFilters.completion === 'completed' ? 'Completed' : 'Incomplete'}`,
+                (activeFilters.dueDateFrom || activeFilters.dueDateTo)
+                  && `Date: ${activeFilters.dueDateFrom ?? 'Any'} to ${activeFilters.dueDateTo ?? 'Any'}`,
+              ].filter(Boolean).join(' · ')}
+            </p>
+            <form className="mt-4 space-y-4" onSubmit={saveCurrentPreset}>
+              <label className="block text-sm font-medium text-slate-700">
+                <span className="mb-1 block">Preset name</span>
+                <input
+                  aria-label="Preset name"
+                  autoFocus
+                  className="w-full rounded-xl border border-slate-300 px-3 py-2"
+                  onChange={(event) => setPresetName(event.target.value)}
+                  value={presetName}
+                />
+              </label>
+              {presetError && <p className="text-sm text-red-700" role="alert">{presetError}</p>}
+              <div className="flex justify-end gap-3">
+                <button
+                  className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700"
+                  onClick={() => setShowPresetDialog(false)}
+                  type="button"
+                >
+                  Cancel
+                </button>
+                <button
+                  className="rounded-xl bg-green-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+                  disabled={!presetName.trim()}
+                  type="submit"
+                >
+                  Save
+                </button>
+              </div>
+            </form>
+          </section>
+        </div>
       )}
 
       {showTagManager && (

@@ -20,8 +20,8 @@ function findOwnedSubtask(idParam: string, userId: number) {
   if (!subtask) {
     return undefined;
   }
-  const todo = todoDB.findById(subtask.todo_id);
-  if (!todo || todo.user_id !== userId) {
+  const todo = todoDB.findById(subtask.todo_id, userId);
+  if (!todo) {
     return undefined;
   }
   return subtask;

@@ -22,8 +22,8 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
   if (todoId === null) {
     return notFound();
   }
-  const todo = todoDB.findById(todoId);
-  if (!todo || todo.user_id !== session.userId) {
+  const todo = todoDB.findById(todoId, session.userId);
+  if (!todo) {
     return notFound();
   }
 
@@ -42,8 +42,8 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
     return NextResponse.json({ error: 'Subtask title is required' }, { status: 400 });
   }
 
-  const currentTodo = todoDB.findById(todoId);
-  if (!currentTodo || currentTodo.user_id !== session.userId) {
+  const currentTodo = todoDB.findById(todoId, session.userId);
+  if (!currentTodo) {
     return notFound();
   }
 

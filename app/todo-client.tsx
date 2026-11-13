@@ -1,7 +1,13 @@
 'use client';
 
-import { useEffect, useRef, useState, type FormEvent } from 'react';
-import type { CreateTodoInput, Todo, UpdateTodoInput } from '@/lib/db';
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import type {
+  CreateTodoInput,
+  RecurrencePattern,
+  Todo,
+  TodoUpdateResult,
+  UpdateTodoInput,
+} from '@/lib/db';
 import {
   formatSingaporeDateTime,
   getSingaporeNow,
@@ -32,6 +38,8 @@ interface EditValues {
   title: string;
   dueDate: string;
   priority: Todo['priority'];
+  isRecurring: boolean;
+  recurrencePattern: RecurrencePattern;
 }
 
 function PriorityBadge({ priority }: { priority: Todo['priority'] }) {
@@ -66,12 +74,16 @@ function TodoSection({
   onToggle,
   onEdit,
   onDelete,
+  editingTodo,
+  editDialog,
 }: {
   title: string;
   todos: Todo[];
   onToggle: (todo: Todo, completed: boolean) => void;
   onEdit: (todo: Todo) => void;
   onDelete: (todo: Todo) => void;
+  editingTodo: Todo | null;
+  editDialog: ReactNode;
 }) {
   if (todos.length === 0) {
     return null;
@@ -103,6 +115,11 @@ function TodoSection({
                 <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-slate-500">
                   <PriorityBadge priority={todo.priority} />
                   {todo.due_date && <span>Due {formatSingaporeDateTime(todo.due_date)}</span>}
+                  {todo.is_recurring && todo.recurrence_pattern && (
+                    <span className="inline-flex items-center rounded-full border border-purple-300 bg-purple-100 px-2 py-0.5 text-xs font-medium text-purple-800">
+                      🔄 {todo.recurrence_pattern}
+                    </span>
+                  )}
                 </div>
               </div>
             </div>
@@ -122,6 +139,7 @@ function TodoSection({
                 Delete
               </button>
             </div>
+            {editingTodo?.id === todo.id && editDialog}
           </li>
         ))}
       </ul>
@@ -136,6 +154,8 @@ export default function TodoClient({ initialTodos, userId, initialNow }: TodoCli
   const [priority, setPriority] = useState<Todo['priority']>('medium');
   const [priorityFilter, setPriorityFilter] = useState<Todo['priority'] | 'all'>('all');
   const [dueDate, setDueDate] = useState('');
+  const [isRecurring, setIsRecurring] = useState(false);
+  const [recurrencePattern, setRecurrencePattern] = useState<RecurrencePattern>('daily');
   const [error, setError] = useState<string | null>(null);
   const [editingTodo, setEditingTodo] = useState<Todo | null>(null);
   const [editValues, setEditValues] = useState<EditValues | null>(null);
@@ -171,6 +191,8 @@ export default function TodoClient({ initialTodos, userId, initialNow }: TodoCli
       title: trimmedTitle,
       priority,
       due_date: parsedDueDate ? toSingaporeIsoString(parsedDueDate) : null,
+      is_recurring: isRecurring,
+      recurrence_pattern: isRecurring ? recurrencePattern : null,
     };
     const optimisticId = -Date.now() - nextOptimisticId.current;
     nextOptimisticId.current += 1;
@@ -187,11 +209,14 @@ export default function TodoClient({ initialTodos, userId, initialNow }: TodoCli
       last_notification_sent: null,
       created_at: new Date().toISOString(),
       updated_at: null,
+      tags: [],
     };
     setTodos((current) => [...current, optimisticTodo]);
     setTitle('');
     setDueDate('');
     setPriority('medium');
+    setIsRecurring(false);
+    setRecurrencePattern('daily');
 
     try {
       const saved = await requestJson<Todo>('/api/todos', 'POST', input);
@@ -204,6 +229,8 @@ export default function TodoClient({ initialTodos, userId, initialNow }: TodoCli
       setTitle(input.title);
       setDueDate(dueDate);
       setPriority(input.priority ?? 'medium');
+      setIsRecurring(input.is_recurring ?? false);
+      setRecurrencePattern(input.recurrence_pattern ?? 'daily');
     }
   }
 
@@ -213,8 +240,14 @@ export default function TodoClient({ initialTodos, userId, initialNow }: TodoCli
       item.id === todo.id ? { ...item, completed } : item
     )));
     try {
-      const updated = await requestJson<Todo>(`/api/todos/${todo.id}`, 'PUT', { completed });
-      setTodos((current) => current.map((item) => (item.id === todo.id ? updated : item)));
+      const result = await requestJson<TodoUpdateResult>(`/api/todos/${todo.id}`, 'PUT', { completed });
+      setTodos((current) => {
+        const updatedIds = new Set([result.todo.id, result.nextInstance?.id]);
+        const remaining = current.filter((item) => !updatedIds.has(item.id));
+        return result.nextInstance
+          ? [...remaining, result.todo, result.nextInstance]
+          : [...remaining, result.todo];
+      });
     } catch (requestError) {
       setTodos((current) => current.map((item) => (item.id === todo.id ? todo : item)));
       setError(requestError instanceof Error ? requestError.message : 'Could not update todo. Please try again.');
@@ -223,11 +256,10 @@ export default function TodoClient({ initialTodos, userId, initialNow }: TodoCli
 
   async function deleteTodo(todo: Todo) {
     setError(null);
-    setTodos((current) => current.filter((item) => item.id !== todo.id));
     try {
       await requestJson<{ success: boolean }>(`/api/todos/${todo.id}`, 'DELETE');
+      setTodos((current) => current.filter((item) => item.id !== todo.id));
     } catch (requestError) {
-      setTodos((current) => [...current, todo]);
       setError(requestError instanceof Error ? requestError.message : 'Could not delete todo. Please try again.');
     }
   }
@@ -239,6 +271,8 @@ export default function TodoClient({ initialTodos, userId, initialNow }: TodoCli
       title: todo.title,
       dueDate: todo.due_date ? toSingaporeDateTimeLocal(todo.due_date) : '',
       priority: todo.priority,
+      isRecurring: todo.is_recurring,
+      recurrencePattern: todo.recurrence_pattern ?? 'daily',
     });
   }
 
@@ -279,6 +313,15 @@ export default function TodoClient({ initialTodos, userId, initialNow }: TodoCli
     if (editValues.priority !== editingTodo.priority) {
       updates.priority = editValues.priority;
     }
+    if (editValues.isRecurring !== editingTodo.is_recurring) {
+      updates.is_recurring = editValues.isRecurring;
+    }
+    if (
+      editValues.recurrencePattern !== editingTodo.recurrence_pattern &&
+      editValues.isRecurring
+    ) {
+      updates.recurrence_pattern = editValues.recurrencePattern;
+    }
     if (Object.keys(updates).length === 0) {
       closeEdit();
       return;
@@ -291,13 +334,13 @@ export default function TodoClient({ initialTodos, userId, initialNow }: TodoCli
       todo.id === editingTodo.id ? optimisticTodo : todo
     )));
     try {
-      const updated = await requestJson<Todo>(
+      const result = await requestJson<TodoUpdateResult>(
         `/api/todos/${editingTodo.id}`,
         'PUT',
         updates,
       );
       setTodos((current) => current.map((todo) => (
-        todo.id === editingTodo.id ? updated : todo
+        todo.id === editingTodo.id ? result.todo : todo
       )));
       setEditingTodo(null);
       setEditValues(null);
@@ -324,6 +367,111 @@ export default function TodoClient({ initialTodos, userId, initialNow }: TodoCli
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [editingTodo, editBusy]);
+
+  const editDialog = editingTodo && editValues ? (
+    <div
+      aria-label={`Edit ${editingTodo.title}`}
+      aria-modal="true"
+      className="fixed inset-0 z-10 flex items-center justify-center bg-slate-950/40 p-4"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) {
+          closeEdit();
+        }
+      }}
+      role="dialog"
+      tabIndex={-1}
+    >
+      <form className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl" onSubmit={saveEdit}>
+        <h2 className="text-xl font-semibold text-slate-950">Edit todo</h2>
+        <label className="mt-5 block">
+          <span className="mb-1 block text-sm font-medium text-slate-700">Title</span>
+          <input
+            aria-label="Edit title"
+            className="w-full rounded-xl border border-slate-300 px-3 py-2"
+            onChange={(event) => setEditValues({ ...editValues, title: event.target.value })}
+            value={editValues.title}
+          />
+        </label>
+        <div className="mt-4 flex flex-col gap-2">
+          <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
+            <input
+              aria-label="Repeat"
+              checked={editValues.isRecurring}
+              disabled={!editValues.dueDate}
+              onChange={(event) => setEditValues({
+                ...editValues,
+                isRecurring: event.target.checked,
+              })}
+              type="checkbox"
+            />
+            Repeat
+          </label>
+          {editValues.isRecurring && (
+            <label className="flex items-center gap-2 text-sm text-slate-700">
+              Recurrence pattern
+              <select
+                aria-label="Recurrence pattern"
+                className="rounded-xl border border-slate-300 bg-white px-3 py-2"
+                onChange={(event) => setEditValues({
+                  ...editValues,
+                  recurrencePattern: event.target.value as RecurrencePattern,
+                })}
+                value={editValues.recurrencePattern}
+              >
+                <option value="daily">Daily</option>
+                <option value="weekly">Weekly</option>
+                <option value="monthly">Monthly</option>
+                <option value="yearly">Yearly</option>
+              </select>
+            </label>
+          )}
+        </div>
+        <label className="mt-4 block">
+          <span className="mb-1 block text-sm font-medium text-slate-700">Priority</span>
+          <select
+            aria-label="Edit priority"
+            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2"
+            onChange={(event) => setEditValues({
+              ...editValues,
+              priority: event.target.value as Todo['priority'],
+            })}
+            value={editValues.priority}
+          >
+            <option value="high">High</option>
+            <option value="medium">Medium</option>
+            <option value="low">Low</option>
+          </select>
+        </label>
+        <label className="mt-4 block">
+          <span className="mb-1 block text-sm font-medium text-slate-700">Due date</span>
+          <input
+            aria-label="Edit due date"
+            className="w-full rounded-xl border border-slate-300 px-3 py-2"
+            onChange={(event) => setEditValues({ ...editValues, dueDate: event.target.value })}
+            type="datetime-local"
+            value={editValues.dueDate}
+          />
+        </label>
+        <div className="mt-6 flex justify-end gap-3">
+          <button
+            className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700"
+            disabled={editBusy}
+            onClick={closeEdit}
+            type="button"
+          >
+            Cancel
+          </button>
+          <button
+            className="rounded-xl bg-indigo-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+            disabled={editBusy}
+            type="submit"
+          >
+            {editBusy ? 'Updating…' : 'Update'}
+          </button>
+        </div>
+      </form>
+    </div>
+  ) : null;
 
   return (
     <div className="mt-10">
@@ -366,6 +514,37 @@ export default function TodoClient({ initialTodos, userId, initialNow }: TodoCli
             />
             <span className="mt-1 block text-xs text-slate-500">Singapore time (optional)</span>
           </label>
+          <div className="flex flex-col justify-center gap-2">
+            <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
+              <input
+                aria-label="Repeat"
+                checked={isRecurring}
+                disabled={!dueDate}
+                onChange={(event) => setIsRecurring(event.target.checked)}
+                type="checkbox"
+              />
+              Repeat
+            </label>
+            {isRecurring && (
+              <label className="flex items-center gap-2 text-sm text-slate-700">
+                Recurrence pattern
+                <select
+                  aria-label="Recurrence pattern"
+                  className="rounded-xl border border-slate-300 bg-white px-3 py-2"
+                  onChange={(event) => setRecurrencePattern(event.target.value as RecurrencePattern)}
+                  value={recurrencePattern}
+                >
+                  <option value="daily">Daily</option>
+                  <option value="weekly">Weekly</option>
+                  <option value="monthly">Monthly</option>
+                  <option value="yearly">Yearly</option>
+                </select>
+              </label>
+            )}
+            {!dueDate && (
+              <p className="text-xs text-slate-500">Set a due date to enable recurrence.</p>
+            )}
+          </div>
           <div className="sm:col-span-2">
             <button
               className="rounded-xl bg-indigo-700 px-5 py-2.5 text-sm font-semibold text-white hover:bg-indigo-800"
@@ -394,9 +573,33 @@ export default function TodoClient({ initialTodos, userId, initialNow }: TodoCli
         </select>
       </label>
 
-      <TodoSection title="Overdue" todos={sections.overdue} onToggle={toggleTodo} onEdit={openEdit} onDelete={deleteTodo} />
-      <TodoSection title="Pending" todos={sections.pending} onToggle={toggleTodo} onEdit={openEdit} onDelete={deleteTodo} />
-      <TodoSection title="Completed" todos={sections.completed} onToggle={toggleTodo} onEdit={openEdit} onDelete={deleteTodo} />
+      <TodoSection
+        title="Overdue"
+        todos={sections.overdue}
+        onToggle={toggleTodo}
+        onEdit={openEdit}
+        onDelete={deleteTodo}
+        editingTodo={editingTodo}
+        editDialog={editDialog}
+      />
+      <TodoSection
+        title="Pending"
+        todos={sections.pending}
+        onToggle={toggleTodo}
+        onEdit={openEdit}
+        onDelete={deleteTodo}
+        editingTodo={editingTodo}
+        editDialog={editDialog}
+      />
+      <TodoSection
+        title="Completed"
+        todos={sections.completed}
+        onToggle={toggleTodo}
+        onEdit={openEdit}
+        onDelete={deleteTodo}
+        editingTodo={editingTodo}
+        editDialog={editDialog}
+      />
       {todos.length === 0 && (
         <p className="mt-8 text-center text-sm text-slate-500">No todos yet. Add one above.</p>
       )}
@@ -404,76 +607,6 @@ export default function TodoClient({ initialTodos, userId, initialNow }: TodoCli
         <p className="mt-8 text-center text-sm text-slate-500">No todos match this priority.</p>
       )}
 
-      {editingTodo && editValues && (
-        <div
-          aria-label={`Edit ${editingTodo.title}`}
-          aria-modal="true"
-          className="fixed inset-0 z-10 flex items-center justify-center bg-slate-950/40 p-4"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) {
-              closeEdit();
-            }
-          }}
-          role="dialog"
-          tabIndex={-1}
-        >
-          <form className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl" onSubmit={saveEdit}>
-            <h2 className="text-xl font-semibold text-slate-950">Edit todo</h2>
-            <label className="mt-5 block">
-              <span className="mb-1 block text-sm font-medium text-slate-700">Title</span>
-              <input
-                aria-label="Edit title"
-                className="w-full rounded-xl border border-slate-300 px-3 py-2"
-                onChange={(event) => setEditValues({ ...editValues, title: event.target.value })}
-                value={editValues.title}
-              />
-            </label>
-            <label className="mt-4 block">
-              <span className="mb-1 block text-sm font-medium text-slate-700">Priority</span>
-              <select
-                aria-label="Edit priority"
-                className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2"
-                onChange={(event) => setEditValues({
-                  ...editValues,
-                  priority: event.target.value as Todo['priority'],
-                })}
-                value={editValues.priority}
-              >
-                <option value="high">High</option>
-                <option value="medium">Medium</option>
-                <option value="low">Low</option>
-              </select>
-            </label>
-            <label className="mt-4 block">
-              <span className="mb-1 block text-sm font-medium text-slate-700">Due date</span>
-              <input
-                aria-label="Edit due date"
-                className="w-full rounded-xl border border-slate-300 px-3 py-2"
-                onChange={(event) => setEditValues({ ...editValues, dueDate: event.target.value })}
-                type="datetime-local"
-                value={editValues.dueDate}
-              />
-            </label>
-            <div className="mt-6 flex justify-end gap-3">
-              <button
-                className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700"
-                disabled={editBusy}
-                onClick={closeEdit}
-                type="button"
-              >
-                Cancel
-              </button>
-              <button
-                className="rounded-xl bg-indigo-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
-                disabled={editBusy}
-                type="submit"
-              >
-                {editBusy ? 'Updating…' : 'Update'}
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
     </div>
   );
 }

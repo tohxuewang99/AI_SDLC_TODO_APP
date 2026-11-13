@@ -41,6 +41,19 @@ Usernames are case-insensitive and cannot be registered twice.
 Login does not reveal whether another username is registered. A canceled passkey
 prompt leaves the username in place so you can retry.
 
+## Todo basics and recurring tasks
+
+After signing in, enter a title to create a todo. Priority defaults to Medium;
+you can also set a due date and choose High, Medium, or Low. Due dates use
+Singapore local time and must be at least one minute in the future.
+
+To repeat a todo, set its due date, select **Repeat**, and choose Daily, Weekly,
+Monthly, or Yearly. Completing a recurring todo creates its next instance with
+the current title, priority, reminder setting, pattern, and tags. Monthly dates
+that do not exist in the next month are clamped to that month's last day; a
+yearly February 29 occurrence becomes February 28 in a non-leap year. Turn off
+**Repeat** in the todo editor to stop future instances.
+
 ### Add another device
 
 While signed in, choose **Add another passkey** and complete the passkey prompt

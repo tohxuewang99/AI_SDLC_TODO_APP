@@ -1,8 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { getSession } from '@/lib/auth';
-import { todoDB, type UpdateTodoInput } from '@/lib/db';
-import { parseSingaporeDateTime, toSingaporeIsoString } from '@/lib/timezone';
-import { normalizeTodoTitle, validatePriority } from '@/lib/todo-validation';
+import { todoDB } from '@/lib/db';
+import { parseUpdateTodoInput } from '@/lib/todo-validation';
 
 interface RouteContext {
   params: Promise<{ id: string }>;
@@ -28,8 +27,8 @@ export async function GET(_request: NextRequest, { params }: RouteContext) {
 
   const { id: idParam } = await params;
   const id = parseId(idParam);
-  const todo = id === null ? undefined : todoDB.findById(id);
-  if (!todo || todo.user_id !== session.userId) {
+  const todo = id === null ? undefined : todoDB.findById(id, session.userId);
+  if (!todo) {
     return notFound();
   }
   return NextResponse.json(todo);
@@ -43,11 +42,8 @@ export async function PUT(request: NextRequest, { params }: RouteContext) {
 
   const { id: idParam } = await params;
   const id = parseId(idParam);
-  if (id === null) {
-    return notFound();
-  }
-  const existing = todoDB.findById(id);
-  if (!existing || existing.user_id !== session.userId) {
+  const existing = id === null ? undefined : todoDB.findById(id, session.userId);
+  if (!existing || id === null) {
     return notFound();
   }
 
@@ -57,61 +53,29 @@ export async function PUT(request: NextRequest, { params }: RouteContext) {
   } catch {
     return NextResponse.json({ error: 'Request body must be valid JSON' }, { status: 400 });
   }
-  if (typeof body !== 'object' || body === null || Array.isArray(body)) {
-    return NextResponse.json({ error: 'Request body must be a JSON object' }, { status: 400 });
+
+  let input;
+  try {
+    input = parseUpdateTodoInput(body, existing);
+  } catch (error) {
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : 'Invalid todo' },
+      { status: 400 },
+    );
   }
 
-  const input = body as Record<string, unknown>;
-  const updates: UpdateTodoInput = {};
-  if (input.title !== undefined) {
-    const title = normalizeTodoTitle(input.title);
-    if (!title) {
-      return NextResponse.json({ error: 'Title cannot be empty' }, { status: 400 });
+  try {
+    const result = todoDB.updateAndMaybeRecur(id, session.userId, input);
+    if (!result) {
+      return notFound();
     }
-    updates.title = title;
-  }
-  if (input.priority !== undefined) {
-    if (input.priority === null) {
-      return NextResponse.json({
-        error: "Invalid priority: null. Must be 'high', 'medium', or 'low'.",
-      }, { status: 400 });
+    return NextResponse.json(result);
+  } catch (error) {
+    if (error instanceof Error && error.message === 'Tag not found') {
+      return NextResponse.json({ error: 'Tag not found' }, { status: 404 });
     }
-    try {
-      updates.priority = validatePriority(input.priority);
-    } catch (error) {
-      return NextResponse.json({
-        error: error instanceof Error ? error.message : 'Invalid priority',
-      }, { status: 400 });
-    }
+    throw error;
   }
-  if (input.due_date !== undefined) {
-    if (input.due_date === null) {
-      updates.due_date = null;
-    } else if (typeof input.due_date === 'string') {
-      const parsedDate = parseSingaporeDateTime(input.due_date);
-      if (!parsedDate) {
-        return NextResponse.json({ error: 'Due date must be a valid date and time' }, { status: 400 });
-      }
-      updates.due_date = toSingaporeIsoString(parsedDate);
-    } else {
-      return NextResponse.json({ error: 'Due date must be a valid date and time' }, { status: 400 });
-    }
-  }
-  if (input.completed !== undefined) {
-    if (typeof input.completed !== 'boolean') {
-      return NextResponse.json({ error: 'Completed must be true or false' }, { status: 400 });
-    }
-    updates.completed = input.completed;
-  }
-  if (Object.keys(updates).length === 0) {
-    return NextResponse.json({ error: 'At least one supported field is required' }, { status: 400 });
-  }
-
-  const updated = todoDB.update(id, updates);
-  if (!updated) {
-    return notFound();
-  }
-  return NextResponse.json(updated);
 }
 
 export async function DELETE(_request: NextRequest, { params }: RouteContext) {
@@ -122,14 +86,8 @@ export async function DELETE(_request: NextRequest, { params }: RouteContext) {
 
   const { id: idParam } = await params;
   const id = parseId(idParam);
-  if (id === null) {
+  if (id === null || !todoDB.delete(id, session.userId)) {
     return notFound();
   }
-  const existing = todoDB.findById(id);
-  if (!existing || existing.user_id !== session.userId) {
-    return notFound();
-  }
-
-  todoDB.delete(id);
   return NextResponse.json({ success: true });
 }

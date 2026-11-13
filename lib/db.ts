@@ -6,6 +6,7 @@ import type { Priority } from './priority';
 
 export { PRIORITY_ORDER, PRIORITY_VALUES } from './priority';
 export type { Priority } from './priority';
+import { calculateNextDueDate } from '@/lib/recurrence';
 
 export interface User {
   id: number;
@@ -39,6 +40,15 @@ export interface AuthChallenge {
   expires_at: number;
 }
 
+export type RecurrencePattern = 'daily' | 'weekly' | 'monthly' | 'yearly';
+
+export interface Tag {
+  id: number;
+  user_id: number;
+  name: string;
+  color: string;
+  created_at: string;
+}
 export interface Todo {
   id: number;
   user_id: number;
@@ -47,27 +57,93 @@ export interface Todo {
   due_date: string | null;
   priority: Priority;
   is_recurring: boolean;
-  recurrence_pattern: string | null;
+  recurrence_pattern: RecurrencePattern | null;
   reminder_minutes: number | null;
   last_notification_sent: string | null;
   created_at: string;
   updated_at: string | null;
+  tags: Tag[];
 }
 
 export interface CreateTodoInput {
   title: string;
   due_date?: string | null;
   priority?: Priority;
+  is_recurring?: boolean;
+  recurrence_pattern?: RecurrencePattern | null;
+  reminder_minutes?: number | null;
+  tag_ids?: number[];
 }
 
-export interface UpdateTodoInput {
-  title?: string;
-  due_date?: string | null;
-  priority?: Priority;
+export interface UpdateTodoInput extends Partial<CreateTodoInput> {
   completed?: boolean;
 }
 
+export interface TodoUpdateResult {
+  todo: Todo;
+  nextInstance?: Todo;
+}
+
+interface TodoRow extends Omit<Todo, 'completed' | 'is_recurring' | 'tags'> {
+  completed: number;
+  is_recurring: number;
+}
 let db: Database.Database | undefined;
+
+function getTodo(
+  database: Database.Database,
+  id: number,
+  userId: number,
+): Todo | undefined {
+  const row = database.prepare(
+    `SELECT id, user_id, title, completed, due_date, priority, is_recurring,
+            recurrence_pattern, reminder_minutes, last_notification_sent,
+            created_at, updated_at
+     FROM todos WHERE id = ? AND user_id = ?`,
+  ).get(id, userId) as TodoRow | undefined;
+
+  if (!row) {
+    return undefined;
+  }
+
+  const tags = database.prepare(
+    `SELECT tags.id, tags.user_id, tags.name, tags.color, tags.created_at
+     FROM tags
+     JOIN todo_tags ON todo_tags.tag_id = tags.id
+     WHERE todo_tags.todo_id = ? AND tags.user_id = ?
+     ORDER BY tags.id`,
+  ).all(id, userId) as Tag[];
+
+  return {
+    ...row,
+    completed: Boolean(row.completed),
+    is_recurring: Boolean(row.is_recurring),
+    tags,
+  };
+}
+
+function setTodoTags(
+  database: Database.Database,
+  todoId: number,
+  userId: number,
+  tagIds: number[],
+): void {
+  const uniqueIds = [...new Set(tagIds)];
+  const findTag = database.prepare('SELECT id FROM tags WHERE id = ? AND user_id = ?');
+  for (const tagId of uniqueIds) {
+    if (!findTag.get(tagId, userId)) {
+      throw new Error('Tag not found');
+    }
+  }
+
+  database.prepare('DELETE FROM todo_tags WHERE todo_id = ?').run(todoId);
+  const insertLink = database.prepare(
+    'INSERT INTO todo_tags (todo_id, tag_id) VALUES (?, ?)',
+  );
+  for (const tagId of uniqueIds) {
+    insertLink.run(todoId, tagId);
+  }
+}
 
 function getDb(): Database.Database {
   if (db) {
@@ -100,6 +176,16 @@ function getDb(): Database.Database {
     );
     CREATE INDEX IF NOT EXISTS idx_authenticators_user_id ON authenticators(user_id);
 
+    CREATE TABLE IF NOT EXISTS auth_challenges (
+      username TEXT NOT NULL COLLATE NOCASE,
+      purpose TEXT NOT NULL CHECK (purpose IN ('registration', 'authentication')),
+      user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+      user_handle TEXT,
+      challenge TEXT NOT NULL,
+      expires_at INTEGER NOT NULL,
+      PRIMARY KEY (username, purpose)
+    );
+
     CREATE TABLE IF NOT EXISTS todos (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -117,15 +203,21 @@ function getDb(): Database.Database {
     CREATE INDEX IF NOT EXISTS idx_todos_user_id ON todos(user_id);
     CREATE INDEX IF NOT EXISTS idx_todos_due_date ON todos(due_date);
 
-    CREATE TABLE IF NOT EXISTS auth_challenges (
-      username TEXT NOT NULL COLLATE NOCASE,
-      purpose TEXT NOT NULL CHECK (purpose IN ('registration', 'authentication')),
-      user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-      user_handle TEXT,
-      challenge TEXT NOT NULL,
-      expires_at INTEGER NOT NULL,
-      PRIMARY KEY (username, purpose)
+    CREATE TABLE IF NOT EXISTS tags (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      color TEXT NOT NULL DEFAULT '#3B82F6',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(user_id, name)
     );
+
+    CREATE TABLE IF NOT EXISTS todo_tags (
+      todo_id INTEGER NOT NULL REFERENCES todos(id) ON DELETE CASCADE,
+      tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+      PRIMARY KEY (todo_id, tag_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_todo_tags_tag_id ON todo_tags(tag_id);
   `);
 
   const userColumns = connection.pragma('table_info(users)') as { name: string }[];
@@ -152,30 +244,183 @@ function getDb(): Database.Database {
   return connection;
 }
 
-interface TodoRow extends Omit<Todo, 'completed' | 'is_recurring' | 'created_at' | 'updated_at'> {
-  completed: 0 | 1;
-  is_recurring: 0 | 1;
-  created_at: string;
-  updated_at: string | null;
-}
+export const todoDB = {
+  findAllByUser(userId: number, priority?: Priority): Todo[] {
+    const database = getDb();
+    const rows = database.prepare(
+      `SELECT id FROM todos WHERE user_id = ?${priority === undefined ? '' : ' AND priority = ?'}
+       ORDER BY created_at DESC, id DESC`,
+    ).all(...(priority === undefined ? [userId] : [userId, priority])) as { id: number }[];
+    return rows.flatMap(({ id }) => {
+      const todo = getTodo(database, id, userId);
+      return todo ? [todo] : [];
+    });
+  },
 
-function normalizeSqliteTimestamp(value: string | null): string | null {
-  if (value === null) {
-    return null;
-  }
-  const parsed = new Date(`${value.replace(' ', 'T')}Z`);
-  return Number.isNaN(parsed.getTime()) ? value : parsed.toISOString();
-}
+  findById(id: number, userId: number): Todo | undefined {
+    return getTodo(getDb(), id, userId);
+  },
 
-function mapTodo(row: TodoRow): Todo {
-  return {
-    ...row,
-    completed: row.completed === 1,
-    is_recurring: row.is_recurring === 1,
-    created_at: normalizeSqliteTimestamp(row.created_at) ?? row.created_at,
-    updated_at: normalizeSqliteTimestamp(row.updated_at),
-  };
-}
+  create(userId: number, input: CreateTodoInput): Todo {
+    const database = getDb();
+    const createTodo = database.transaction(() => {
+      const result = database.prepare(
+        `INSERT INTO todos
+          (user_id, title, due_date, priority, is_recurring, recurrence_pattern, reminder_minutes)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        userId,
+        input.title,
+        input.due_date ?? null,
+        input.priority ?? 'medium',
+        input.is_recurring ? 1 : 0,
+        input.is_recurring ? input.recurrence_pattern ?? null : null,
+        input.reminder_minutes ?? null,
+      );
+      const id = Number(result.lastInsertRowid);
+      if (input.tag_ids) {
+        setTodoTags(database, id, userId, input.tag_ids);
+      }
+
+      const todo = getTodo(database, id, userId);
+      if (!todo) {
+        throw new Error('Created todo could not be read back');
+      }
+      return todo;
+    });
+    return createTodo();
+  },
+
+  updateAndMaybeRecur(
+    id: number,
+    userId: number,
+    input: UpdateTodoInput,
+  ): TodoUpdateResult | undefined {
+    const database = getDb();
+    const updateTodo = database.transaction(() => {
+      const existing = getTodo(database, id, userId);
+      if (!existing) {
+        return undefined;
+      }
+
+      const columns: string[] = [];
+      const values: (string | number | null)[] = [];
+      const addUpdate = (column: string, value: string | number | null) => {
+        columns.push(`${column} = ?`);
+        values.push(value);
+      };
+
+      if (input.title !== undefined) addUpdate('title', input.title);
+      if (input.completed !== undefined) addUpdate('completed', input.completed ? 1 : 0);
+      if (input.due_date !== undefined) addUpdate('due_date', input.due_date);
+      if (input.priority !== undefined) addUpdate('priority', input.priority);
+      if (input.is_recurring !== undefined) {
+        addUpdate('is_recurring', input.is_recurring ? 1 : 0);
+        if (!input.is_recurring) {
+          addUpdate('recurrence_pattern', null);
+        }
+      }
+      if (input.recurrence_pattern !== undefined && input.is_recurring !== false) {
+        addUpdate('recurrence_pattern', input.recurrence_pattern);
+      }
+      if (input.reminder_minutes !== undefined) {
+        addUpdate('reminder_minutes', input.reminder_minutes);
+      }
+      if (
+        (input.due_date !== undefined && input.due_date !== existing.due_date) ||
+        (input.reminder_minutes !== undefined &&
+          input.reminder_minutes !== existing.reminder_minutes)
+      ) {
+        addUpdate('last_notification_sent', null);
+      }
+
+      if (columns.length > 0) {
+        columns.push("updated_at = datetime('now')");
+        database.prepare(
+          `UPDATE todos SET ${columns.join(', ')} WHERE id = ? AND user_id = ?`,
+        ).run(...values, id, userId);
+      }
+      if (input.tag_ids !== undefined) {
+        setTodoTags(database, id, userId, input.tag_ids);
+      }
+
+      const updated = getTodo(database, id, userId);
+      if (!updated) {
+        throw new Error('Updated todo could not be read back');
+      }
+
+      const justCompleted = input.completed === true && !existing.completed;
+      if (
+        !justCompleted ||
+        !updated.is_recurring ||
+        !updated.recurrence_pattern ||
+        !updated.due_date
+      ) {
+        return { todo: updated };
+      }
+
+      const nextDueDate = calculateNextDueDate(
+        updated.due_date,
+        updated.recurrence_pattern,
+      );
+      const nextResult = database.prepare(
+        `INSERT INTO todos
+          (user_id, title, due_date, priority, is_recurring, recurrence_pattern, reminder_minutes)
+         VALUES (?, ?, ?, ?, 1, ?, ?)`,
+      ).run(
+        userId,
+        updated.title,
+        nextDueDate,
+        updated.priority,
+        updated.recurrence_pattern,
+        updated.reminder_minutes,
+      );
+      const nextId = Number(nextResult.lastInsertRowid);
+      const nextTagIds = database.prepare(
+        'SELECT tag_id FROM todo_tags WHERE todo_id = ? ORDER BY tag_id',
+      ).all(id) as { tag_id: number }[];
+      setTodoTags(database, nextId, userId, nextTagIds.map(({ tag_id }) => tag_id));
+
+      const nextInstance = getTodo(database, nextId, userId);
+      if (!nextInstance) {
+        throw new Error('Next recurring todo could not be read back');
+      }
+      return { todo: updated, nextInstance };
+    });
+
+    return updateTodo.immediate();
+  },
+
+  delete(id: number, userId: number): boolean {
+    const result = getDb().prepare(
+      'DELETE FROM todos WHERE id = ? AND user_id = ?',
+    ).run(id, userId);
+    return result.changes === 1;
+  },
+};
+
+export const tagDB = {
+  findAllByUser(userId: number): Tag[] {
+    return getDb().prepare(
+      `SELECT id, user_id, name, color, created_at
+       FROM tags WHERE user_id = ? ORDER BY name COLLATE NOCASE, id`,
+    ).all(userId) as Tag[];
+  },
+
+  create(userId: number, name: string, color = '#3B82F6'): Tag {
+    const database = getDb();
+    const result = database.prepare(
+      'INSERT INTO tags (user_id, name, color) VALUES (?, ?, ?)',
+    ).run(userId, name, color);
+    const tag = database.prepare(
+      'SELECT id, user_id, name, color, created_at FROM tags WHERE id = ?',
+    ).get(Number(result.lastInsertRowid)) as Tag | undefined;
+    if (!tag) {
+      throw new Error('Created tag could not be read back');
+    }
+    return tag;
+  },
+};
 
 export const userDB = {
   findByUsername(username: string): User | undefined {
@@ -212,72 +457,6 @@ export const userDB = {
     });
 
     return create();
-  },
-};
-
-export const todoDB = {
-  findAllByUser(userId: number, priority?: Priority): Todo[] {
-    const statement = getDb().prepare(
-      `SELECT id, user_id, title, completed, due_date, priority, is_recurring,
-              recurrence_pattern, reminder_minutes, last_notification_sent,
-              created_at, updated_at
-       FROM todos WHERE user_id = ?${priority === undefined ? '' : ' AND priority = ?'}`,
-    );
-    const rows = (priority
-      ? statement.all(userId, priority)
-      : statement.all(userId)) as TodoRow[];
-    return rows.map(mapTodo);
-  },
-
-  findById(id: number): Todo | undefined {
-    const row = getDb().prepare(
-      `SELECT id, user_id, title, completed, due_date, priority, is_recurring,
-              recurrence_pattern, reminder_minutes, last_notification_sent,
-              created_at, updated_at
-       FROM todos WHERE id = ?`,
-    ).get(id) as TodoRow | undefined;
-    return row ? mapTodo(row) : undefined;
-  },
-
-  create(userId: number, input: CreateTodoInput): Todo {
-    const result = getDb().prepare(
-      `INSERT INTO todos (user_id, title, due_date, priority)
-       VALUES (?, ?, ?, ?)`,
-    ).run(userId, input.title, input.due_date ?? null, input.priority ?? 'medium');
-    const todo = this.findById(Number(result.lastInsertRowid));
-    if (!todo) {
-      throw new Error('Created todo could not be read back');
-    }
-    return todo;
-  },
-
-  update(id: number, input: UpdateTodoInput): Todo | undefined {
-    const columns: { [K in keyof UpdateTodoInput]: string } = {
-      title: 'title',
-      due_date: 'due_date',
-      priority: 'priority',
-      completed: 'completed',
-    };
-    const entries = Object.entries(input).filter(
-      ([key, value]) => value !== undefined && Object.hasOwn(columns, key),
-    ) as [keyof UpdateTodoInput, UpdateTodoInput[keyof UpdateTodoInput]][];
-    if (entries.length === 0) {
-      return this.findById(id);
-    }
-
-    const assignments = entries.map(([key]) => `${columns[key]} = ?`);
-    const values = entries.map(([key, value]) => (
-      key === 'completed' ? Number(value) : value
-    ));
-    getDb().prepare(
-      `UPDATE todos SET ${assignments.join(', ')}, updated_at = datetime('now')
-       WHERE id = ?`,
-    ).run(...values, id);
-    return this.findById(id);
-  },
-
-  delete(id: number): boolean {
-    return getDb().prepare('DELETE FROM todos WHERE id = ?').run(id).changes === 1;
   },
 };
 

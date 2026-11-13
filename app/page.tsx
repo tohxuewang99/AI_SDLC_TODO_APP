@@ -1,7 +1,7 @@
 import { redirect } from 'next/navigation';
 import AuthenticatedControls from '@/app/authenticated-controls';
-import { getSession } from '@/lib/auth';
 import TodoClient from '@/app/todo-client';
+import { getSession } from '@/lib/auth';
 import { todoDB } from '@/lib/db';
 import { getSingaporeNow } from '@/lib/timezone';
 
@@ -31,6 +31,14 @@ export default async function Home() {
         initialTodos={todoDB.findAllByUser(session.userId)}
         userId={session.userId}
       />
+      <section className="mt-8 rounded-3xl border border-slate-200 bg-white p-8 shadow-sm">
+        <a
+          className="mt-6 inline-flex rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-50"
+          href="/calendar"
+        >
+          Open calendar
+        </a>
+      </section>
     </main>
   );
 }

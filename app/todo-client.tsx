@@ -5,8 +5,10 @@ import type {
   CreateTodoInput,
   RecurrencePattern,
   Subtask,
+  Tag,
   Todo,
   TodoUpdateResult,
+  UpdateTagInput,
   UpdateTodoInput,
 } from '@/lib/db';
 import {
@@ -26,6 +28,7 @@ import { PRIORITY_BADGE_STYLES } from '@/lib/priority-styles';
 
 interface TodoClientProps {
   initialTodos: Todo[];
+  initialTags: Tag[];
   userId: number;
   initialNow: string;
 }
@@ -41,6 +44,300 @@ interface EditValues {
   isRecurring: boolean;
   recurrencePattern: RecurrencePattern;
   reminderMinutes: number | null;
+  tagIds: number[];
+}
+
+function TagPill({
+  tag,
+  selected = false,
+  onClick,
+  ariaLabel,
+}: {
+  tag: Tag;
+  selected?: boolean;
+  onClick?: () => void;
+  ariaLabel?: string;
+}) {
+  const className = `inline-flex max-w-40 items-center gap-1 truncate rounded-full border px-3 py-1 text-sm font-medium transition-colors ${
+    selected
+      ? 'border-transparent text-white'
+      : 'border-slate-300 bg-white text-slate-700'
+  }`;
+  const style = selected ? { backgroundColor: tag.color } : undefined;
+  if (!onClick) {
+    return (
+      <span className={className} style={style} title={tag.name}>
+        {selected && <span aria-hidden="true">✓</span>}
+        <span className="truncate">{tag.name}</span>
+      </span>
+    );
+  }
+  return (
+    <button
+      aria-label={ariaLabel}
+      aria-pressed={selected}
+      className={className}
+      onClick={onClick}
+      style={style}
+      title={tag.name}
+      type="button"
+    >
+      {selected && <span aria-hidden="true">✓</span>}
+      <span className="truncate">{tag.name}</span>
+    </button>
+  );
+}
+
+function TagSelector({
+  tags,
+  selectedIds,
+  onToggle,
+  label = 'Tags',
+}: {
+  tags: Tag[];
+  selectedIds: number[];
+  onToggle: (tagId: number) => void;
+  label?: string;
+}) {
+  if (tags.length === 0) {
+    return null;
+  }
+  return (
+    <fieldset className="sm:col-span-2">
+      <legend className="mb-2 text-sm font-medium text-slate-700">{label}</legend>
+      <div className="flex flex-wrap gap-2">
+        {tags.map((tag) => (
+          <TagPill
+            ariaLabel={`Toggle tag ${tag.name}`}
+            key={tag.id}
+            onClick={() => onToggle(tag.id)}
+            selected={selectedIds.includes(tag.id)}
+            tag={tag}
+          />
+        ))}
+      </div>
+    </fieldset>
+  );
+}
+
+function TagColorFields({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const colorPickerValue = /^#[\da-f]{6}$/i.test(value) ? value : '#3B82F6';
+  return (
+    <div className="flex items-center gap-2">
+      <input
+        aria-label={`${label} picker`}
+        className="h-10 w-12 cursor-pointer rounded border border-slate-300 bg-white p-1"
+        onChange={(event) => onChange(event.target.value)}
+        type="color"
+        value={colorPickerValue}
+      />
+      <input
+        aria-label={`${label} hex`}
+        className="min-w-0 flex-1 rounded-lg border border-slate-300 px-3 py-2"
+        maxLength={7}
+        onChange={(event) => onChange(event.target.value)}
+        value={value}
+      />
+    </div>
+  );
+}
+
+function ManageTagsModal({
+  tags,
+  onClose,
+  onCreate,
+  onUpdate,
+  onDelete,
+}: {
+  tags: Tag[];
+  onClose: () => void;
+  onCreate: (input: { name: string; color: string }) => Promise<void>;
+  onUpdate: (id: number, input: UpdateTagInput) => Promise<void>;
+  onDelete: (id: number) => Promise<void>;
+}) {
+  const [name, setName] = useState('');
+  const [color, setColor] = useState('#3B82F6');
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editColor, setEditColor] = useState('#3B82F6');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function createTag(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError(null);
+    setBusy(true);
+    try {
+      await onCreate({ name, color });
+      setName('');
+      setColor('#3B82F6');
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Could not create tag.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function beginEdit(tag: Tag) {
+    setError(null);
+    setEditingId(tag.id);
+    setEditName(tag.name);
+    setEditColor(tag.color);
+  }
+
+  async function saveTag(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (editingId === null) {
+      return;
+    }
+    setError(null);
+    setBusy(true);
+    try {
+      await onUpdate(editingId, { name: editName, color: editColor });
+      setEditingId(null);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Could not update tag.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deleteTag(tag: Tag) {
+    if (!window.confirm(`Delete the "${tag.name}" tag? It will be removed from all todos.`)) {
+      return;
+    }
+    setError(null);
+    setBusy(true);
+    try {
+      await onDelete(tag.id);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Could not delete tag.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div
+      aria-label="Manage Tags"
+      aria-modal="true"
+      className="fixed inset-0 z-20 flex items-center justify-center bg-slate-950/40 p-4"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget && !busy) {
+          onClose();
+        }
+      }}
+      role="dialog"
+      tabIndex={-1}
+    >
+      <section className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-6 shadow-xl">
+        <div className="flex items-center justify-between gap-4">
+          <h2 className="text-xl font-semibold text-slate-950">Manage Tags</h2>
+          <button
+            aria-label="Close tag manager"
+            className="rounded-lg px-3 py-1 text-slate-600 hover:bg-slate-100"
+            disabled={busy}
+            onClick={onClose}
+            type="button"
+          >
+            Close
+          </button>
+        </div>
+
+        <ul className="mt-5 space-y-3">
+          {tags.map((tag) => (
+            <li className="rounded-xl border border-slate-200 p-3" key={tag.id}>
+              {editingId === tag.id ? (
+                <form className="space-y-3" onSubmit={saveTag}>
+                  <label className="block">
+                    <span className="mb-1 block text-sm font-medium text-slate-700">Name</span>
+                    <input
+                      aria-label="Edit tag name"
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                      onChange={(event) => setEditName(event.target.value)}
+                      value={editName}
+                    />
+                  </label>
+                  <TagColorFields label="Edit tag color" onChange={setEditColor} value={editColor} />
+                  <div className="flex justify-end gap-2">
+                    <button
+                      className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm"
+                      disabled={busy}
+                      onClick={() => setEditingId(null)}
+                      type="button"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      className="rounded-lg bg-indigo-700 px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
+                      disabled={busy || !editName.trim()}
+                      type="submit"
+                    >
+                      {busy ? 'Updating…' : 'Update'}
+                    </button>
+                  </div>
+                </form>
+              ) : (
+                <div className="flex items-center justify-between gap-3">
+                  <TagPill selected tag={tag} />
+                  <div className="flex shrink-0 gap-3 text-sm">
+                    <button
+                      className="font-semibold text-indigo-700 hover:text-indigo-900"
+                      disabled={busy}
+                      onClick={() => beginEdit(tag)}
+                      type="button"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      className="font-semibold text-red-700 hover:text-red-900"
+                      disabled={busy}
+                      onClick={() => void deleteTag(tag)}
+                      type="button"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              )}
+            </li>
+          ))}
+          {tags.length === 0 && (
+            <li className="text-sm text-slate-500">No tags yet. Create one below.</li>
+          )}
+        </ul>
+
+        <form className="mt-5 space-y-3 border-t border-slate-200 pt-5" onSubmit={createTag}>
+          <label className="block">
+            <span className="mb-1 block text-sm font-medium text-slate-700">Tag name</span>
+            <input
+              aria-label="Tag name"
+              className="w-full rounded-lg border border-slate-300 px-3 py-2"
+              onChange={(event) => setName(event.target.value)}
+              value={name}
+            />
+          </label>
+          <TagColorFields label="Tag color" onChange={setColor} value={color} />
+          <button
+            className="rounded-xl bg-indigo-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+            disabled={busy || !name.trim()}
+            type="submit"
+          >
+            {busy ? 'Saving…' : 'Create Tag'}
+          </button>
+        </form>
+        {error && <p className="mt-3 text-sm text-red-700" role="alert">{error}</p>}
+      </section>
+    </div>
+  );
 }
 
 function PriorityBadge({ priority }: { priority: Todo['priority'] }) {
@@ -75,6 +372,7 @@ function TodoSection({
   onToggle,
   onEdit,
   onDelete,
+  onTagClick,
   onAddSubtask,
   onToggleSubtask,
   onDeleteSubtask,
@@ -86,6 +384,7 @@ function TodoSection({
   onToggle: (todo: Todo, completed: boolean) => void;
   onEdit: (todo: Todo) => void;
   onDelete: (todo: Todo) => void;
+  onTagClick: (tagId: number) => void;
   onAddSubtask: (todoId: number, title: string) => Promise<void>;
   onToggleSubtask: (todoId: number, subtask: Subtask, completed: boolean) => void;
   onDeleteSubtask: (todoId: number, subtask: Subtask) => Promise<void>;
@@ -136,6 +435,18 @@ function TodoSection({
                     </span>
                   )}
                 </div>
+                {todo.tags && todo.tags.length > 0 && (
+                  <div aria-label={`Tags for ${todo.title}`} className="mt-2 flex flex-wrap gap-2">
+                    {todo.tags.map((tag) => (
+                      <TagPill
+                        ariaLabel={`Filter by tag ${tag.name}`}
+                        key={tag.id}
+                        onClick={() => onTagClick(tag.id)}
+                        tag={tag}
+                      />
+                    ))}
+                  </div>
+                )}
                 <SubtaskList
                   onAdd={(subtaskTitle) => onAddSubtask(todo.id, subtaskTitle)}
                   onDelete={(subtask) => onDeleteSubtask(todo.id, subtask)}
@@ -318,12 +629,15 @@ function SubtaskList({
   );
 }
 
-export default function TodoClient({ initialTodos, userId, initialNow }: TodoClientProps) {
+export default function TodoClient({ initialTodos, initialTags, userId, initialNow }: TodoClientProps) {
   const [todos, setTodos] = useState(initialTodos);
+  const [tags, setTags] = useState(initialTags);
   const [now, setNow] = useState(() => new Date(initialNow));
   const [title, setTitle] = useState('');
   const [priority, setPriority] = useState<Todo['priority']>('medium');
   const [priorityFilter, setPriorityFilter] = useState<Todo['priority'] | 'all'>('all');
+  const [tagFilter, setTagFilter] = useState<number | 'all'>('all');
+  const [selectedTagIds, setSelectedTagIds] = useState<number[]>([]);
   const [dueDate, setDueDate] = useState('');
   const [isRecurring, setIsRecurring] = useState(false);
   const [recurrencePattern, setRecurrencePattern] = useState<RecurrencePattern>('daily');
@@ -333,6 +647,7 @@ export default function TodoClient({ initialTodos, userId, initialNow }: TodoCli
   const [editingTodo, setEditingTodo] = useState<Todo | null>(null);
   const [editValues, setEditValues] = useState<EditValues | null>(null);
   const [editBusy, setEditBusy] = useState(false);
+  const [showTagManager, setShowTagManager] = useState(false);
   const nextOptimisticId = useRef(0);
   const nextOptimisticSubtaskId = useRef(0);
   const subtaskMutationVersions = useRef(new Map<number, number>());
@@ -342,9 +657,12 @@ export default function TodoClient({ initialTodos, userId, initialNow }: TodoCli
     return () => window.clearInterval(timer);
   }, []);
 
-  const filteredTodos = priorityFilter === 'all'
+  const priorityFilteredTodos = priorityFilter === 'all'
     ? todos
     : todos.filter((todo) => todo.priority === priorityFilter);
+  const filteredTodos = tagFilter === 'all'
+    ? priorityFilteredTodos
+    : priorityFilteredTodos.filter((todo) => todo.tags?.some((tag) => tag.id === tagFilter));
   const sections = sectionTodos(filteredTodos, now);
 
   async function addTodo(event: FormEvent<HTMLFormElement>) {
@@ -369,6 +687,7 @@ export default function TodoClient({ initialTodos, userId, initialNow }: TodoCli
       is_recurring: isRecurring,
       recurrence_pattern: isRecurring ? recurrencePattern : null,
       reminder_minutes: reminderMinutes,
+      tag_ids: [...selectedTagIds],
     };
     const optimisticId = -Date.now() - nextOptimisticId.current;
     nextOptimisticId.current += 1;
@@ -379,13 +698,13 @@ export default function TodoClient({ initialTodos, userId, initialNow }: TodoCli
       completed: false,
       due_date: input.due_date ?? null,
       priority: input.priority ?? 'medium',
-      is_recurring: false,
-      recurrence_pattern: null,
+      is_recurring: input.is_recurring ?? false,
+      recurrence_pattern: input.recurrence_pattern ?? null,
       reminder_minutes: reminderMinutes,
       last_notification_sent: null,
       created_at: new Date().toISOString(),
       updated_at: null,
-      tags: [],
+      tags: tags.filter((tag) => selectedTagIds.includes(tag.id)),
     };
     setTodos((current) => [...current, optimisticTodo]);
     setTitle('');
@@ -396,13 +715,14 @@ export default function TodoClient({ initialTodos, userId, initialNow }: TodoCli
     setReminderMinutes(null);
 
     try {
-      const saved = await requestJson<Todo>('/api/todos', 'POST', input);
+      const savedTodo = await requestJson<Todo>('/api/todos', 'POST', input);
       setTodos((current) => current.map((todo) => (
-        todo.id === optimisticId ? saved : todo
+        todo.id === optimisticId ? savedTodo : todo
       )));
+      setSelectedTagIds([]);
     } catch (requestError) {
-      setTodos((current) => current.filter((todo) => todo.id !== optimisticId));
       setError(requestError instanceof Error ? requestError.message : 'Could not create todo. Please try again.');
+      setTodos((current) => current.filter((todo) => todo.id !== optimisticId));
       setTitle(input.title);
       setDueDate(dueDate);
       setPriority(input.priority ?? 'medium');
@@ -410,6 +730,34 @@ export default function TodoClient({ initialTodos, userId, initialNow }: TodoCli
       setRecurrencePattern(input.recurrence_pattern ?? 'daily');
       setReminderMinutes(input.reminder_minutes ?? null);
     }
+  }
+
+  async function createTag(input: { name: string; color: string }) {
+    setError(null);
+    const created = await requestJson<Tag>('/api/tags', 'POST', input);
+    setTags((current) => [...current, created]);
+  }
+
+  async function updateTag(tagId: number, input: UpdateTagInput) {
+    setError(null);
+    const updated = await requestJson<Tag>(`/api/tags/${tagId}`, 'PUT', input);
+    setTags((current) => current.map((tag) => (tag.id === tagId ? updated : tag)));
+    setTodos((current) => current.map((todo) => ({
+      ...todo,
+      tags: (todo.tags ?? []).map((tag) => (tag.id === tagId ? updated : tag)),
+    })));
+  }
+
+  async function deleteTag(tagId: number) {
+    setError(null);
+    await requestJson<{ success: boolean }>(`/api/tags/${tagId}`, 'DELETE');
+    setTags((current) => current.filter((tag) => tag.id !== tagId));
+    setTodos((current) => current.map((todo) => ({
+      ...todo,
+      tags: (todo.tags ?? []).filter((tag) => tag.id !== tagId),
+    })));
+    setSelectedTagIds((current) => current.filter((id) => id !== tagId));
+    setTagFilter((current) => (current === tagId ? 'all' : current));
   }
 
   async function toggleTodo(todo: Todo, completed: boolean) {
@@ -578,6 +926,7 @@ export default function TodoClient({ initialTodos, userId, initialNow }: TodoCli
       isRecurring: todo.is_recurring,
       recurrencePattern: todo.recurrence_pattern ?? 'daily',
       reminderMinutes: todo.reminder_minutes,
+      tagIds: (todo.tags ?? []).map((tag) => tag.id),
     });
   }
 
@@ -630,6 +979,13 @@ export default function TodoClient({ initialTodos, userId, initialNow }: TodoCli
     ) {
       updates.recurrence_pattern = editValues.recurrencePattern;
     }
+    const currentTagIds = new Set((editingTodo.tags ?? []).map((tag) => tag.id));
+    const selectedTagIdsSet = new Set(editValues.tagIds);
+    const tagChanges = editValues.tagIds.some((id) => !currentTagIds.has(id))
+      || [...currentTagIds].some((id) => !selectedTagIdsSet.has(id));
+    if (tagChanges) {
+      updates.tag_ids = editValues.tagIds;
+    }
     if (Object.keys(updates).length === 0) {
       closeEdit();
       return;
@@ -637,10 +993,6 @@ export default function TodoClient({ initialTodos, userId, initialNow }: TodoCli
 
     setEditBusy(true);
     setError(null);
-    const optimisticTodo = { ...editingTodo, ...updates };
-    setTodos((current) => current.map((todo) => (
-      todo.id === editingTodo.id ? optimisticTodo : todo
-    )));
     try {
       const result = await requestJson<TodoUpdateResult>(
         `/api/todos/${editingTodo.id}`,
@@ -653,9 +1005,18 @@ export default function TodoClient({ initialTodos, userId, initialNow }: TodoCli
       setEditingTodo(null);
       setEditValues(null);
     } catch (requestError) {
-      setTodos((current) => current.map((todo) => (
-        todo.id === editingTodo.id ? editingTodo : todo
-      )));
+      try {
+        const currentTodo = await requestJson<Todo>(`/api/todos/${editingTodo.id}`, 'GET');
+        setTodos((current) => current.map((todo) => (
+          todo.id === editingTodo.id ? currentTodo : todo
+        )));
+      } catch (refreshError) {
+        setError(
+          `${requestError instanceof Error ? requestError.message : 'Could not update todo.'} `
+          + `The saved todo could not be refreshed: ${refreshError instanceof Error ? refreshError.message : 'unknown error'}`,
+        );
+        return;
+      }
       setError(requestError instanceof Error ? requestError.message : 'Could not update todo. Please try again.');
     } finally {
       setEditBusy(false);
@@ -772,6 +1133,17 @@ export default function TodoClient({ initialTodos, userId, initialNow }: TodoCli
             onChange={(value) => setEditValues({ ...editValues, reminderMinutes: value })}
           />
         </div>
+        <TagSelector
+          label="Tags"
+          onToggle={(tagId) => setEditValues({
+            ...editValues,
+            tagIds: editValues.tagIds.includes(tagId)
+              ? editValues.tagIds.filter((id) => id !== tagId)
+              : [...editValues.tagIds, tagId],
+          })}
+          selectedIds={editValues.tagIds}
+          tags={tags}
+        />
         <div className="mt-6 flex justify-end gap-3">
           <button
             className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700"
@@ -818,7 +1190,16 @@ export default function TodoClient({ initialTodos, userId, initialNow }: TodoCli
         )}
       </div>
       <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
-        <h2 className="text-xl font-semibold text-slate-950">Add a todo</h2>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-xl font-semibold text-slate-950">Add a todo</h2>
+          <button
+            className="rounded-xl border border-indigo-300 px-4 py-2 text-sm font-semibold text-indigo-800 hover:bg-indigo-50"
+            onClick={() => setShowTagManager(true)}
+            type="button"
+          >
+            + Manage Tags
+          </button>
+        </div>
         <form className="mt-5 grid gap-4 sm:grid-cols-2" onSubmit={addTodo}>
           <label className="sm:col-span-2">
             <span className="mb-1 block text-sm font-medium text-slate-700">Title</span>
@@ -895,6 +1276,15 @@ export default function TodoClient({ initialTodos, userId, initialNow }: TodoCli
               <p className="text-xs text-slate-500">Set a due date to enable recurrence.</p>
             )}
           </div>
+          <TagSelector
+            onToggle={(tagId) => setSelectedTagIds((current) => (
+              current.includes(tagId)
+                ? current.filter((id) => id !== tagId)
+                : [...current, tagId]
+            ))}
+            selectedIds={selectedTagIds}
+            tags={tags}
+          />
           <div className="sm:col-span-2">
             <button
               className="rounded-xl bg-indigo-700 px-5 py-2.5 text-sm font-semibold text-white hover:bg-indigo-800"
@@ -908,26 +1298,43 @@ export default function TodoClient({ initialTodos, userId, initialNow }: TodoCli
 
       {error && <p className="mt-4 text-sm text-red-700" role="alert">{error}</p>}
 
-      <label className="mt-8 flex w-fit items-center gap-3 text-sm font-medium text-slate-700">
-        <span>Priority</span>
-        <select
-          aria-label="Priority filter"
-          className="rounded-xl border border-slate-300 bg-white px-3 py-2"
-          onChange={(event) => setPriorityFilter(event.target.value as Todo['priority'] | 'all')}
-          value={priorityFilter}
-        >
-          <option value="all">All Priorities</option>
-          <option value="high">High Priority</option>
-          <option value="medium">Medium Priority</option>
-          <option value="low">Low Priority</option>
-        </select>
-      </label>
+      <div className="mt-8 flex flex-wrap gap-4">
+        <label className="flex w-fit items-center gap-3 text-sm font-medium text-slate-700">
+          <span>Priority</span>
+          <select
+            aria-label="Priority filter"
+            className="rounded-xl border border-slate-300 bg-white px-3 py-2"
+            onChange={(event) => setPriorityFilter(event.target.value as Todo['priority'] | 'all')}
+            value={priorityFilter}
+          >
+            <option value="all">All Priorities</option>
+            <option value="high">High Priority</option>
+            <option value="medium">Medium Priority</option>
+            <option value="low">Low Priority</option>
+          </select>
+        </label>
+        <label className="flex w-fit items-center gap-3 text-sm font-medium text-slate-700">
+          <span>Tags</span>
+          <select
+            aria-label="Tag filter"
+            className="rounded-xl border border-slate-300 bg-white px-3 py-2"
+            onChange={(event) => setTagFilter(event.target.value === 'all' ? 'all' : Number(event.target.value))}
+            value={tagFilter}
+          >
+            <option value="all">All Tags</option>
+            {tags.map((tag) => (
+              <option key={tag.id} value={tag.id}>{tag.name}</option>
+            ))}
+          </select>
+        </label>
+      </div>
       <TodoSection
         title="Overdue"
         todos={sections.overdue}
         onToggle={toggleTodo}
         onEdit={openEdit}
         onDelete={deleteTodo}
+        onTagClick={setTagFilter}
         onAddSubtask={addSubtask}
         onToggleSubtask={toggleSubtask}
         onDeleteSubtask={deleteSubtask}
@@ -940,6 +1347,7 @@ export default function TodoClient({ initialTodos, userId, initialNow }: TodoCli
         onToggle={toggleTodo}
         onEdit={openEdit}
         onDelete={deleteTodo}
+        onTagClick={setTagFilter}
         onAddSubtask={addSubtask}
         onToggleSubtask={toggleSubtask}
         onDeleteSubtask={deleteSubtask}
@@ -952,6 +1360,7 @@ export default function TodoClient({ initialTodos, userId, initialNow }: TodoCli
         onToggle={toggleTodo}
         onEdit={openEdit}
         onDelete={deleteTodo}
+        onTagClick={setTagFilter}
         onAddSubtask={addSubtask}
         onToggleSubtask={toggleSubtask}
         onDeleteSubtask={deleteSubtask}
@@ -962,7 +1371,19 @@ export default function TodoClient({ initialTodos, userId, initialNow }: TodoCli
         <p className="mt-8 text-center text-sm text-slate-500">No todos yet. Add one above.</p>
       )}
       {todos.length > 0 && filteredTodos.length === 0 && (
-        <p className="mt-8 text-center text-sm text-slate-500">No todos match this priority.</p>
+        <p className="mt-8 text-center text-sm text-slate-500">
+          {tagFilter === 'all' ? 'No todos match this priority.' : 'No todos match the selected filters.'}
+        </p>
+      )}
+
+      {showTagManager && (
+        <ManageTagsModal
+          onClose={() => setShowTagManager(false)}
+          onCreate={createTag}
+          onDelete={deleteTag}
+          onUpdate={updateTag}
+          tags={tags}
+        />
       )}
 
     </div>

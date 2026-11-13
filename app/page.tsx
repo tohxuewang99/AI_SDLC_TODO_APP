@@ -3,7 +3,7 @@ import Link from 'next/link';
 import AuthenticatedControls from '@/app/authenticated-controls';
 import TodoClient from '@/app/todo-client';
 import { getSession } from '@/lib/auth';
-import { todoDB } from '@/lib/db';
+import { tagDB, todoDB } from '@/lib/db';
 import { getSingaporeNow } from '@/lib/timezone';
 
 export const instant = false;
@@ -34,6 +34,7 @@ export default async function Home() {
       </nav>
       <TodoClient
         initialNow={getSingaporeNow().toISOString()}
+        initialTags={tagDB.findAllByUser(session.userId)}
         initialTodos={todoDB.findAllByUser(session.userId)}
         userId={session.userId}
       />

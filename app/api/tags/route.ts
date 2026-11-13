@@ -1,6 +1,11 @@
-import { NextResponse } from 'next/server';
+import { NextResponse, type NextRequest } from 'next/server';
 import { getSession } from '@/lib/auth';
 import { tagDB } from '@/lib/db';
+import { isTagColor, isTagNameConflict, normalizeTagName } from '@/lib/tag-validation';
+
+function invalidBody() {
+  return NextResponse.json({ error: 'Request body must be a JSON object' }, { status: 400 });
+}
 
 export async function GET() {
   const session = await getSession();
@@ -10,7 +15,7 @@ export async function GET() {
   return NextResponse.json(tagDB.findAllByUser(session.userId));
 }
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   const session = await getSession();
   if (!session) {
     return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
@@ -20,30 +25,26 @@ export async function POST(request: Request) {
   try {
     body = await request.json();
   } catch {
-    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+    return NextResponse.json({ error: 'Request body must be valid JSON' }, { status: 400 });
   }
-  if (!body || typeof body !== 'object' || Array.isArray(body)) {
-    return NextResponse.json({ error: 'Request body must be an object' }, { status: 400 });
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+    return invalidBody();
   }
 
-  const { name, color } = body as { name?: unknown; color?: unknown };
-  if (typeof name !== 'string' || !name.trim()) {
+  const input = body as Record<string, unknown>;
+  const name = normalizeTagName(input.name);
+  if (!name) {
     return NextResponse.json({ error: 'Tag name is required' }, { status: 400 });
   }
-  if (color !== undefined && (typeof color !== 'string' || !/^#[0-9A-Fa-f]{6}$/.test(color))) {
+  const color = input.color;
+  if (color !== undefined && !isTagColor(color)) {
     return NextResponse.json({ error: 'Color must be a valid hex code' }, { status: 400 });
   }
 
   try {
-    return NextResponse.json(
-      tagDB.create(session.userId, name.trim(), color as string | undefined),
-      { status: 201 },
-    );
+    return NextResponse.json(tagDB.create(session.userId, name, color), { status: 201 });
   } catch (error) {
-    if (
-      error instanceof Error &&
-      error.message.includes('UNIQUE constraint failed: tags.user_id, tags.name')
-    ) {
+    if (isTagNameConflict(error)) {
       return NextResponse.json(
         { error: 'A tag with this name already exists' },
         { status: 409 },

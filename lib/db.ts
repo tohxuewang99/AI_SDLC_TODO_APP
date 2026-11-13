@@ -54,6 +54,17 @@ export interface Tag {
   color: string;
   created_at: string;
 }
+
+export interface CreateTagInput {
+  name: string;
+  color?: string;
+}
+
+export interface UpdateTagInput {
+  name?: string;
+  color?: string;
+}
+
 export interface Todo {
   id: number;
   user_id: number;
@@ -157,6 +168,18 @@ function subtasksByTodoId(todoId: number, database = getDb()): Subtask[] {
   return rows.map(mapSubtask);
 }
 
+function mapTodo(row: TodoRow): Todo {
+  return {
+    ...row,
+    completed: Boolean(row.completed),
+    is_recurring: Boolean(row.is_recurring),
+    created_at: normalizeSqliteTimestamp(row.created_at) ?? row.created_at,
+    updated_at: normalizeSqliteTimestamp(row.updated_at),
+    tags: [],
+    subtasks: [],
+  };
+}
+
 function getTodo(
   database: Database.Database,
   id: number,
@@ -178,7 +201,7 @@ function getTodo(
      FROM tags
      JOIN todo_tags ON todo_tags.tag_id = tags.id
      WHERE todo_tags.todo_id = ? AND tags.user_id = ?
-     ORDER BY tags.id`,
+     ORDER BY tags.name COLLATE NOCASE, tags.id`,
   ).all(id, userId) as Tag[];
 
   return {
@@ -291,6 +314,7 @@ function getDb(): Database.Database {
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       UNIQUE(user_id, name)
     );
+    CREATE INDEX IF NOT EXISTS idx_tags_user_id ON tags(user_id);
 
     CREATE TABLE IF NOT EXISTS holidays (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -359,13 +383,60 @@ export const todoDB = {
   findAllByUser(userId: number, priority?: Priority): Todo[] {
     const database = getDb();
     const rows = database.prepare(
-      `SELECT id FROM todos WHERE user_id = ?${priority === undefined ? '' : ' AND priority = ?'}
+      `SELECT id, user_id, title, completed, due_date, priority, is_recurring,
+              recurrence_pattern, reminder_minutes, last_notification_sent,
+              created_at, updated_at
+       FROM todos WHERE user_id = ?${priority === undefined ? '' : ' AND priority = ?'}
        ORDER BY created_at DESC, id DESC`,
-    ).all(...(priority === undefined ? [userId] : [userId, priority])) as { id: number }[];
-    return rows.flatMap(({ id }) => {
-      const todo = getTodo(database, id, userId);
-      return todo ? [todo] : [];
-    });
+    ).all(...(priority === undefined ? [userId] : [userId, priority])) as TodoRow[];
+    const todos = rows.map(mapTodo);
+    if (todos.length === 0) {
+      return todos;
+    }
+
+    const parameters = priority === undefined ? [userId] : [userId, priority];
+    const priorityFilter = priority === undefined ? '' : ' AND todos.priority = ?';
+    const subtaskRows = database.prepare(
+      `SELECT subtasks.id, subtasks.todo_id, subtasks.title, subtasks.completed,
+              subtasks.position, subtasks.created_at
+       FROM subtasks
+       INNER JOIN todos ON todos.id = subtasks.todo_id
+       WHERE todos.user_id = ?${priorityFilter}
+       ORDER BY subtasks.todo_id, subtasks.position, subtasks.id`,
+    ).all(...parameters) as SubtaskRow[];
+    const subtasksByTodo = new Map<number, Subtask[]>();
+    for (const row of subtaskRows) {
+      const subtasks = subtasksByTodo.get(row.todo_id) ?? [];
+      subtasks.push(mapSubtask(row));
+      subtasksByTodo.set(row.todo_id, subtasks);
+    }
+    const tagRows = database.prepare(
+      `SELECT tags.id, tags.user_id, tags.name, tags.color, tags.created_at,
+              todo_tags.todo_id
+       FROM todo_tags
+       INNER JOIN tags ON tags.id = todo_tags.tag_id
+       INNER JOIN todos ON todos.id = todo_tags.todo_id
+       WHERE todos.user_id = ?${priorityFilter}
+       ORDER BY todo_tags.todo_id, tags.name COLLATE NOCASE, tags.id`,
+    ).all(...parameters) as (Tag & { todo_id: number })[];
+    const tagsByTodo = new Map<number, Tag[]>();
+    for (const row of tagRows) {
+      const tags = tagsByTodo.get(row.todo_id) ?? [];
+      tags.push({
+        id: row.id,
+        user_id: row.user_id,
+        name: row.name,
+        color: row.color,
+        created_at: normalizeSqliteTimestamp(row.created_at) ?? row.created_at,
+      });
+      tagsByTodo.set(row.todo_id, tags);
+    }
+
+    return todos.map((todo) => ({
+      ...todo,
+      subtasks: subtasksByTodo.get(todo.id) ?? [],
+      tags: tagsByTodo.get(todo.id) ?? [],
+    }));
   },
 
   findById(id: number, userId: number): Todo | undefined {
@@ -529,6 +600,13 @@ export const tagDB = {
     ).all(userId) as Tag[];
   },
 
+  findById(id: number, userId: number): Tag | undefined {
+    return getDb().prepare(
+      `SELECT id, user_id, name, color, created_at
+       FROM tags WHERE id = ? AND user_id = ?`,
+    ).get(id, userId) as Tag | undefined;
+  },
+
   create(userId: number, name: string, color = '#3B82F6'): Tag {
     const database = getDb();
     const result = database.prepare(
@@ -541,6 +619,72 @@ export const tagDB = {
       throw new Error('Created tag could not be read back');
     }
     return tag;
+  },
+
+  update(id: number, userId: number, input: UpdateTagInput): Tag | undefined {
+    const columns: { [K in keyof UpdateTagInput]: string } = {
+      name: 'name',
+      color: 'color',
+    };
+    const entries = Object.entries(input).filter(
+      ([key, value]) => value !== undefined && Object.hasOwn(columns, key),
+    ) as [keyof UpdateTagInput, UpdateTagInput[keyof UpdateTagInput]][];
+    if (entries.length === 0) {
+      return this.findById(id, userId);
+    }
+
+    const assignments = entries.map(([key]) => `${columns[key]} = ?`);
+    const values = entries.map(([, value]) => value);
+    getDb().prepare(
+      `UPDATE tags SET ${assignments.join(', ')}
+       WHERE id = ? AND user_id = ?`,
+    ).run(...values, id, userId);
+    return this.findById(id, userId);
+  },
+
+  delete(id: number, userId: number): boolean {
+    return getDb().prepare(
+      'DELETE FROM tags WHERE id = ? AND user_id = ?',
+    ).run(id, userId).changes === 1;
+  },
+
+  attachToTodo(todoId: number, tagId: number, userId: number): boolean {
+    const database = getDb();
+    const attach = database.transaction(() => {
+      const owned = database.prepare(
+        `SELECT 1 FROM todos
+         INNER JOIN tags ON tags.id = ?
+         WHERE todos.id = ? AND todos.user_id = ? AND tags.user_id = ?`,
+      ).get(tagId, todoId, userId, userId);
+      if (!owned) {
+        return false;
+      }
+      database.prepare(
+        `INSERT INTO todo_tags (todo_id, tag_id) VALUES (?, ?)
+         ON CONFLICT(todo_id, tag_id) DO NOTHING`,
+      ).run(todoId, tagId);
+      return true;
+    });
+    return attach();
+  },
+
+  detachFromTodo(todoId: number, tagId: number, userId: number): boolean {
+    const database = getDb();
+    const detach = database.transaction(() => {
+      const owned = database.prepare(
+        `SELECT 1 FROM todos
+         INNER JOIN tags ON tags.id = ?
+         WHERE todos.id = ? AND todos.user_id = ? AND tags.user_id = ?`,
+      ).get(tagId, todoId, userId, userId);
+      if (!owned) {
+        return false;
+      }
+      database.prepare(
+        'DELETE FROM todo_tags WHERE todo_id = ? AND tag_id = ?',
+      ).run(todoId, tagId);
+      return true;
+    });
+    return detach();
   },
 };
 

@@ -17,6 +17,25 @@ export async function createTodo(page: Page, fields: TodoFields): Promise<void> 
   await page.getByRole('button', { name: 'Add', exact: true }).click();
 }
 
+export async function createTag(
+  page: Page,
+  name: string,
+  color = '#3B82F6',
+): Promise<number> {
+  await page.getByRole('button', { name: '+ Manage Tags' }).click();
+  await page.getByLabel('Tag name').fill(name);
+  await page.getByLabel('Tag color hex').fill(color);
+  const responsePromise = page.waitForResponse((response) => (
+    response.url().endsWith('/api/tags') && response.request().method() === 'POST'
+  ));
+  await page.getByRole('button', { name: 'Create Tag' }).click();
+  const response = await responsePromise;
+  expect(response.status()).toBe(201);
+  const tag = await response.json() as { id: number };
+  await page.getByRole('button', { name: 'Close tag manager' }).click();
+  return tag.id;
+}
+
 export async function addSubtask(
   page: Page,
   todoTitle: string,

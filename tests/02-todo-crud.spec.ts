@@ -139,8 +139,13 @@ test('toggles completion and deletes a todo without confirmation', async ({ page
   await expect(page.getByRole('heading', { name: 'Completed (1)' })).toBeVisible();
   await page.getByLabel('Mark "Read a book" as incomplete').click();
   await expect(page.getByRole('heading', { name: 'Pending (1)' })).toBeVisible();
+  const deleteResponse = page.waitForResponse((response) => (
+    response.url().match(/\/api\/todos\/\d+$/) !== null
+    && response.request().method() === 'DELETE'
+  ));
   await page.getByRole('button', { name: 'Delete' }).click();
   await expect(page.getByText('Read a book')).toHaveCount(0);
+  expect((await deleteResponse).status()).toBe(200);
 
   const response = await page.request.get('/api/todos');
   expect(await response.json()).toHaveLength(0);

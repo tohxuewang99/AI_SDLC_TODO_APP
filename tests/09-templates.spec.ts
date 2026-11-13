@@ -138,6 +138,31 @@ test('permits duplicate names and arbitrary categories, with null offset and no 
   expect(await use.json()).toMatchObject({ title: draft.title_template, due_date: null, subtasks: [] });
 });
 
+test('updates an owned template and rejects updates that violate recurrence requirements', async ({ page }) => {
+  await register(page);
+  const create = await page.request.post('/api/templates', {
+    data: { name: 'Initial', title_template: 'A task', priority: 'medium' },
+  });
+  expect(create.status()).toBe(201);
+  const template = await create.json();
+
+  const update = await page.request.put(`/api/templates/${template.id}`, {
+    data: { name: 'Updated', category: 'Work', priority: 'high' },
+  });
+  expect(update.status()).toBe(200);
+  expect(await update.json()).toMatchObject({
+    id: template.id,
+    name: 'Updated',
+    category: 'Work',
+    priority: 'high',
+  });
+
+  const invalidUpdate = await page.request.put(`/api/templates/${template.id}`, {
+    data: { is_recurring: true, recurrence_pattern: 'weekly' },
+  });
+  expect(invalidUpdate.status()).toBe(400);
+});
+
 test('lists more than 50 templates and recreates a checklist with more than 20 subtasks', async ({ page }) => {
   test.setTimeout(60_000);
   await register(page);

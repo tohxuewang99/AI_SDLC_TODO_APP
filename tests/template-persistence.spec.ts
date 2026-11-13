@@ -70,6 +70,12 @@ test('template snapshots persist with ownership, atomic use, and deletion isolat
       reminder_minutes: null, due_date_offset_minutes: null, subtasks_json: null,
     });
     expect(templateDB.use(noDate.id, owner.id, now)?.due_date).toBeNull();
+    templateDB.update(noDate.id, owner.id, { due_date_offset_minutes: 0 });
+    expect(templateDB.use(noDate.id, owner.id, now)?.due_date).toBe(now.toISOString());
+    connection.prepare('UPDATE templates SET subtasks_json = ? WHERE id = ?')
+      .run('{malformed', noDate.id);
+    expect(templateDB.use(noDate.id, owner.id, now)?.subtasks).toEqual([]);
+    templateDB.update(noDate.id, owner.id, { due_date_offset_minutes: null });
     templateDB.update(noDate.id, owner.id, { is_recurring: true });
     expect(() => templateDB.use(noDate.id, owner.id, now)).toThrow(/offset/);
 

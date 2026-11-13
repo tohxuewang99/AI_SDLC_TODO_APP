@@ -27,8 +27,27 @@ different filename inside `data/`.
 - `npm run dev` starts the development server.
 - `npm run build` creates a production build.
 - `npm run lint` runs ESLint.
-- `npm run test:unit` runs unit tests for authentication and todo validation/sorting logic.
-- `npm run test:e2e` runs the Playwright authentication, todo CRUD, and priority suites.
+- `npm run seed:holidays` seeds Singapore public holidays for 2025–2027.
+  Run this after setup and against each deployment's persistent database.
+  Re-running it updates names without duplicating dates or removing other years.
+- `npm run test:unit` runs authentication, todo, and calendar unit tests.
+- `npm run test:e2e` runs the Playwright authentication, todo, priority, and calendar suites.
+
+## Calendar
+
+Choose **Calendar** from the home page to see a fixed six-week Sun–Sat grid.
+`/calendar?month=2026-11` opens a specific month; malformed values fall back to
+the current Singapore month. Previous/Next/Today replace the URL rather than
+adding history entries. The calendar uses the existing unfiltered `/api/todos`
+array response, including completed tasks and excluding undated tasks.
+
+`GET /api/holidays` returns `{ holidays: [{ id, date, name }] }` and requires
+authentication. Supply both `year=YYYY&month=MM` to restrict results to the full
+42-day visible grid, including adjacent months; invalid parameters return 400.
+The table is global, with one holiday per date. Seed data comes from the
+[Ministry of Manpower](https://www.mom.gov.sg/employment-practices/public-holidays)
+and includes Sunday rest-day replacements. Other years remain navigable but
+have no holidays until verified data is added to `lib/holidays.ts` and seeded.
 
 Next.js 16 renamed the `middleware.ts` convention to `proxy.ts`; `proxy.ts`
 protects `/` and `/calendar` and redirects unauthenticated visitors to `/login`.

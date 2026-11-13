@@ -3,8 +3,9 @@ import { randomBytes } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import type { Priority } from './priority';
+import { generateCalendarGrid } from './calendar.ts';
 
-export { PRIORITY_ORDER, PRIORITY_VALUES } from './priority';
+export { PRIORITY_ORDER, PRIORITY_VALUES } from './priority.ts';
 export type { Priority } from './priority';
 import { calculateNextDueDate } from '@/lib/recurrence';
 import { isReminderDue } from './reminders';
@@ -96,6 +97,12 @@ export interface CreateTodoInput {
   recurrence_pattern?: RecurrencePattern | null;
   reminder_minutes?: number | null;
   tag_ids?: number[];
+}
+
+export interface Holiday {
+  id: number;
+  date: string;
+  name: string;
 }
 
 export interface UpdateTodoInput extends Partial<CreateTodoInput> {
@@ -284,6 +291,14 @@ function getDb(): Database.Database {
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       UNIQUE(user_id, name)
     );
+
+    CREATE TABLE IF NOT EXISTS holidays (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      date TEXT NOT NULL,
+      name TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_holidays_date ON holidays(date);
 
     CREATE TABLE IF NOT EXISTS auth_challenges (
       username TEXT NOT NULL COLLATE NOCASE,
@@ -659,6 +674,30 @@ export const authenticatorDB = {
       'UPDATE authenticators SET counter = ? WHERE id = ? AND counter = ?',
     ).run(newCounter, id, previousCounter);
     return result.changes === 1;
+  },
+};
+
+export const holidayDB = {
+  findAll(): Holiday[] {
+    return getDb().prepare('SELECT id, date, name FROM holidays ORDER BY date').all() as Holiday[];
+  },
+
+  findByMonth(year: number, month: number): Holiday[] {
+    const grid = generateCalendarGrid(year, month);
+    return getDb().prepare(
+      'SELECT id, date, name FROM holidays WHERE date BETWEEN ? AND ? ORDER BY date',
+    ).all(grid[0].date, grid[41].date) as Holiday[];
+  },
+
+  seed(holidays: ReadonlyArray<Omit<Holiday, 'id'>>): void {
+    const database = getDb();
+    const insert = database.prepare(
+      `INSERT INTO holidays (date, name) VALUES (?, ?)
+       ON CONFLICT(date) DO UPDATE SET name = excluded.name`,
+    );
+    database.transaction(() => {
+      for (const holiday of holidays) insert.run(holiday.date, holiday.name);
+    })();
   },
 };
 

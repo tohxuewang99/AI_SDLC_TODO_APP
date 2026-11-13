@@ -43,6 +43,25 @@ prevent repeat polling alerts after acknowledgement; multiple tabs can race
 before acknowledgement, so exactly-once delivery is best effort, not guaranteed.
 Delivery failures appear on the page and are retried at the next polling tick.
 
+## Calendar
+
+Choose **Calendar** on the home page. The calendar always shows six weeks,
+Sunday to Saturday, with adjacent-month days dimmed, weekends shaded, and today
+highlighted. All dates use Singapore time, regardless of your device timezone.
+**Previous month**, **Next month**, and **Today** update the bookmarkable
+`?month=YYYY-MM` address. Choose **Todo App** to return to the list.
+
+Todos appear on their due dates, with the same priority colors as the list.
+Completed todos remain visible with a line through their title. Undated todos
+do not appear, and the list's priority filter does not restrict the calendar.
+Only three todos appear in each cell; **+X more** shows the remaining count.
+Select any date to read all its todos and holiday; press **Close** or Escape
+to dismiss the dialog. The calendar is read-only: edit todos from the list.
+
+An administrator must run `npm run seed:holidays` to load Singapore public
+holidays for 2025–2027. Sunday replacement holidays apply when Sunday is your
+rest day. Dates outside those years still work, but holidays are not seeded.
+
 ## Passkey accounts
 
 This app uses WebAuthn passkeys only. It does not store passwords. A passkey may

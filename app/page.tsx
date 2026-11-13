@@ -1,4 +1,5 @@
 import { redirect } from 'next/navigation';
+import Link from 'next/link';
 import AuthenticatedControls from '@/app/authenticated-controls';
 import TodoClient from '@/app/todo-client';
 import { getSession } from '@/lib/auth';
@@ -26,6 +27,11 @@ export default async function Home() {
         </div>
         <AuthenticatedControls username={session.username} />
       </header>
+      <nav aria-label="Views" className="mt-6">
+        <Link href="/calendar" className="inline-block rounded-xl bg-purple-700 px-4 py-2 font-semibold text-white hover:bg-purple-800">
+          Calendar
+        </Link>
+      </nav>
       <TodoClient
         initialNow={getSingaporeNow().toISOString()}
         initialTodos={todoDB.findAllByUser(session.userId)}

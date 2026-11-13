@@ -2,6 +2,9 @@ import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import AuthenticatedControls from '@/app/authenticated-controls';
 import { getSession } from '@/lib/auth';
+import { Suspense } from 'react';
+import CalendarClient from './calendar-client';
+import { getSingaporeNow, toSingaporeIsoString } from '@/lib/timezone';
 
 export const instant = false;
 
@@ -24,9 +27,9 @@ export default async function CalendarPage() {
         </div>
         <AuthenticatedControls username={session.username} />
       </header>
-      <p className="mt-8 text-slate-600">
-        Calendar features will be added in a later task.
-      </p>
+      <Suspense fallback={<p role="status">Loading calendar...</p>}>
+        <CalendarClient initialNow={toSingaporeIsoString(getSingaporeNow())} />
+      </Suspense>
     </main>
   );
 }

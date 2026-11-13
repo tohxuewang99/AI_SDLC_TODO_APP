@@ -65,6 +65,22 @@ export function getSingaporeNow(): Date {
   return new Date();
 }
 
+export function formatSingaporeDate(value: Date): string {
+  return toSingaporeIsoString(value).slice(0, 10);
+}
+
+// UTC is used only as a host-timezone-independent carrier for calendar arithmetic.
+export function singaporeCalendarDate(year: number, month: number, day: number): Date {
+  const date = new Date(0);
+  date.setUTCFullYear(year, month - 1, day);
+  date.setUTCHours(4, 0, 0, 0);
+  return date;
+}
+
+export function singaporeWeekday(value: Date): number {
+  return new Date(value.getTime() + SINGAPORE_OFFSET_MS).getUTCDay();
+}
+
 export function parseSingaporeDateTime(value: string): Date | null {
   const localMatch = LOCAL_DATE_TIME.exec(value);
   const zonedMatch = ZONED_DATE_TIME.exec(value);

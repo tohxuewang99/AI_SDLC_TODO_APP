@@ -11,6 +11,7 @@ import { calculateNextDueDate } from './recurrence.ts';
 import { isReminderDue } from './reminders.ts';
 import { getSingaporeNow } from './timezone.ts';
 import { parseTemplateSubtasks } from './template-serialization.ts';
+import type { ImportResult, TodoExportItem } from './todo-transfer.ts';
 
 export { REMINDER_LABELS } from './reminders.ts';
 export type { ReminderMinutes } from './reminders.ts';
@@ -432,6 +433,62 @@ function getDb(): Database.Database {
 }
 
 export const todoDB = {
+  importAll(userId: number, items: TodoExportItem[]): ImportResult {
+    const database = getDb();
+    const run = database.transaction(() => {
+      const insertTodo = database.prepare(
+        `INSERT INTO todos
+          (user_id, title, completed, due_date, priority, is_recurring,
+           recurrence_pattern, reminder_minutes, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      );
+      const insertSubtask = database.prepare(
+        'INSERT INTO subtasks (todo_id, title, completed, position) VALUES (?, ?, ?, ?)',
+      );
+      const insertTag = database.prepare(
+        'INSERT INTO tags (user_id, name, color) VALUES (?, ?, ?)',
+      );
+      const linkTag = database.prepare(
+        'INSERT INTO todo_tags (todo_id, tag_id) VALUES (?, ?) ON CONFLICT DO NOTHING',
+      );
+      const existingTags = database.prepare(
+        'SELECT id, name FROM tags WHERE user_id = ? ORDER BY id',
+      ).all(userId) as { id: number; name: string }[];
+      const tagsByName = new Map<string, number>();
+      for (const tag of existingTags) {
+        const key = tag.name.toLowerCase();
+        if (!tagsByName.has(key)) tagsByName.set(key, tag.id);
+      }
+
+      let tagsCreated = 0;
+      let tagsReused = 0;
+      for (const item of items) {
+        const todoId = Number(insertTodo.run(
+          userId, item.title, Number(item.completed), item.due_date, item.priority,
+          Number(item.is_recurring), item.recurrence_pattern, item.reminder_minutes,
+          item.created_at,
+        ).lastInsertRowid);
+        item.subtasks.forEach((subtask, index) => {
+          insertSubtask.run(todoId, subtask.title, Number(subtask.completed), index);
+        });
+        for (const tag of item.tags) {
+          const key = tag.name.toLowerCase();
+          let tagId = tagsByName.get(key);
+          if (tagId === undefined) {
+            tagId = Number(insertTag.run(userId, tag.name, tag.color).lastInsertRowid);
+            tagsByName.set(key, tagId);
+            tagsCreated += 1;
+          } else {
+            tagsReused += 1;
+          }
+          linkTag.run(todoId, tagId);
+        }
+      }
+      return { imported: items.length, tagsCreated, tagsReused };
+    });
+    return run.immediate();
+  },
+
   findDueReminders(userId: number, now: Date): Todo[] {
     const database = getDb();
     const rows = database.prepare(

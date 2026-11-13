@@ -269,8 +269,8 @@ test('check failures are visible and retried at the next polling tick', async ({
       ? { status: 503, json: { error: 'Unavailable' } }
       : { json: { success: true, data: [] } });
   });
-  await page.reload();
   await page.clock.install();
+  await page.reload();
   await expect(page.getByRole('main').getByRole('alert')).toContainText('Could not check reminders');
   await page.clock.fastForward(30_000);
   await expect(page.getByRole('main').getByRole('alert')).toHaveCount(0);

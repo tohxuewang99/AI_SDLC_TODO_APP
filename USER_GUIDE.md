@@ -27,6 +27,18 @@ checklist and an optional due-date offset in minutes; recurring templates and
 reminders require an offset. Tags are not copied. Deleting a template does not
 change todos already created from it.
 
+## Backup and restore
+
+Choose **Export JSON** to download a backup of all your todos, including their
+subtasks and tags. **Export CSV** downloads a spreadsheet-friendly list but
+cannot be imported. Downloads use the current Singapore date in their filenames.
+
+Choose **Import** and select an exported JSON file. Import adds new todos rather
+than merging with existing ones, so importing the same file twice creates
+duplicates. Matching tag names are reused without changing their existing color.
+The list refreshes when the import completes. Files larger than 10 MB may take
+longer; an invalid file is rejected without making partial changes.
+
 ## Reminders and browser notifications
 
 Choose **Enable Notifications** to opt in to the browser permission prompt.

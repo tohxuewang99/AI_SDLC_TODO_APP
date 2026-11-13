@@ -23,6 +23,7 @@ import { calculateProgress } from '@/lib/subtask-logic';
 import { sectionTodos } from '@/lib/todo-logic';
 import ReminderSelect from '@/app/reminder-select';
 import TemplateControls, { type TemplateControlsHandle } from '@/app/template-controls';
+import ExportImportToolbar from '@/app/export-import-toolbar';
 import { useNotifications } from '@/lib/hooks/useNotifications';
 import { isReminderMinutes, REMINDER_LABELS } from '@/lib/reminders';
 import { PRIORITY_BADGE_STYLES } from '@/lib/priority-styles';
@@ -678,6 +679,15 @@ export default function TodoClient({ initialTodos, initialTags, userId, initialN
     : priorityFilteredTodos.filter((todo) => todo.tags?.some((tag) => tag.id === tagFilter));
   const sections = sectionTodos(filteredTodos, now);
 
+  async function refreshAfterImport() {
+    const [updatedTodos, updatedTags] = await Promise.all([
+      requestJson<Todo[]>('/api/todos', 'GET'),
+      requestJson<Tag[]>('/api/tags', 'GET'),
+    ]);
+    setTodos(updatedTodos);
+    setTags(updatedTags);
+  }
+
   async function addTodo(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
@@ -1180,6 +1190,7 @@ export default function TodoClient({ initialTodos, initialTags, userId, initialN
 
   return (
     <div className="mt-10">
+      <ExportImportToolbar onImported={refreshAfterImport} />
       <div className="mb-6 flex flex-col items-end gap-2">
         <button
           className={notifications.permission === 'granted'

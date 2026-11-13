@@ -10,10 +10,10 @@ import {
   isDueDateAtLeastOneMinuteAway,
   parseSingaporeDateTime,
 } from './timezone.ts';
+import { isReminderMinutes } from './reminders.ts';
 
 const priorities = new Set<Priority>(['high', 'medium', 'low']);
 const recurrencePatterns = new Set<RecurrencePattern>(['daily', 'weekly', 'monthly', 'yearly']);
-const reminderValues = new Set([15, 30, 60, 120, 1440, 2880, 10080]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -100,9 +100,12 @@ export function parseCreateTodoInput(value: unknown): CreateTodoInput {
   const reminderMinutes = value.reminder_minutes ?? null;
   if (
     reminderMinutes !== null &&
-    (!Number.isInteger(reminderMinutes) || !reminderValues.has(Number(reminderMinutes)))
+    !isReminderMinutes(reminderMinutes)
   ) {
     throw new Error('Invalid reminder timing');
+  }
+  if (reminderMinutes !== null && !dueDate) {
+    throw new Error('Reminders require a due date');
   }
 
   return {
@@ -165,8 +168,7 @@ export function parseUpdateTodoInput(value: unknown, existing: Todo): UpdateTodo
   if (value.reminder_minutes !== undefined) {
     if (
       value.reminder_minutes !== null &&
-      (!Number.isInteger(value.reminder_minutes) ||
-        !reminderValues.has(Number(value.reminder_minutes)))
+      !isReminderMinutes(value.reminder_minutes)
     ) {
       throw new Error('Invalid reminder timing');
     }
@@ -175,9 +177,48 @@ export function parseUpdateTodoInput(value: unknown, existing: Todo): UpdateTodo
   if (value.tag_ids !== undefined) {
     input.tag_ids = validateTagIds(value.tag_ids);
   }
+  if (value.last_notification_sent !== undefined) {
+    if (value.last_notification_sent === null) {
+      input.last_notification_sent = null;
+    } else {
+      if (
+        typeof value.last_notification_sent !== 'string' ||
+        !/(?:Z|[+-]\d{2}:\d{2})$/.test(value.last_notification_sent)
+      ) {
+        throw new Error('Notification timestamp must be an ISO 8601 timestamp with timezone');
+      }
+      const timestamp = parseSingaporeDateTime(value.last_notification_sent);
+      if (!timestamp) {
+        throw new Error('Invalid notification timestamp');
+      }
+      input.last_notification_sent = timestamp.toISOString();
+    }
+  }
+  if (value.notification_due_date !== undefined) {
+    if (typeof value.notification_due_date !== 'string') {
+      throw new Error('Invalid notification due date');
+    }
+    input.notification_due_date = value.notification_due_date;
+  }
+  if (value.notification_reminder_minutes !== undefined) {
+    if (!isReminderMinutes(value.notification_reminder_minutes)) {
+      throw new Error('Invalid notification reminder timing');
+    }
+    input.notification_reminder_minutes = value.notification_reminder_minutes;
+  }
 
   const isRecurring = input.is_recurring ?? existing.is_recurring;
   const dueDate = input.due_date === undefined ? existing.due_date : input.due_date;
+  const reminderMinutes = input.reminder_minutes === undefined
+    ? existing.reminder_minutes
+    : input.reminder_minutes;
+  if (reminderMinutes !== null && !dueDate) {
+    if (input.due_date === null && input.reminder_minutes === undefined) {
+      input.reminder_minutes = null;
+    } else {
+      throw new Error('Reminders require a due date');
+    }
+  }
   let pattern = input.recurrence_pattern === undefined
     ? existing.recurrence_pattern
     : input.recurrence_pattern;

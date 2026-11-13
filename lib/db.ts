@@ -7,6 +7,10 @@ import type { Priority } from './priority';
 export { PRIORITY_ORDER, PRIORITY_VALUES } from './priority';
 export type { Priority } from './priority';
 import { calculateNextDueDate } from '@/lib/recurrence';
+import { isReminderDue } from './reminders';
+
+export { REMINDER_LABELS } from './reminders';
+export type { ReminderMinutes } from './reminders';
 
 export interface User {
   id: number;
@@ -96,6 +100,9 @@ export interface CreateTodoInput {
 
 export interface UpdateTodoInput extends Partial<CreateTodoInput> {
   completed?: boolean;
+  last_notification_sent?: string | null;
+  notification_due_date?: string;
+  notification_reminder_minutes?: number;
 }
 
 export interface TodoUpdateResult {
@@ -321,6 +328,19 @@ function getDb(): Database.Database {
 }
 
 export const todoDB = {
+  findDueReminders(userId: number, now: Date): Todo[] {
+    const database = getDb();
+    const rows = database.prepare(
+      `SELECT id FROM todos
+       WHERE user_id = ? AND completed = 0 AND due_date IS NOT NULL
+         AND reminder_minutes IS NOT NULL AND last_notification_sent IS NULL`,
+    ).all(userId) as { id: number }[];
+    return rows.flatMap(({ id }) => {
+      const todo = getTodo(database, id, userId);
+      return todo && isReminderDue(todo, now) ? [todo] : [];
+    });
+  },
+
   findAllByUser(userId: number, priority?: Priority): Todo[] {
     const database = getDb();
     const rows = database.prepare(
@@ -378,6 +398,15 @@ export const todoDB = {
       if (!existing) {
         return undefined;
       }
+      if (
+        input.last_notification_sent != null &&
+        ((input.notification_due_date !== undefined &&
+          input.notification_due_date !== existing.due_date) ||
+          (input.notification_reminder_minutes !== undefined &&
+            input.notification_reminder_minutes !== existing.reminder_minutes))
+      ) {
+        throw new Error('Reminder settings changed');
+      }
 
       const columns: string[] = [];
       const values: (string | number | null)[] = [];
@@ -408,6 +437,8 @@ export const todoDB = {
           input.reminder_minutes !== existing.reminder_minutes)
       ) {
         addUpdate('last_notification_sent', null);
+      } else if (input.last_notification_sent !== undefined) {
+        addUpdate('last_notification_sent', input.last_notification_sent);
       }
 
       if (columns.length > 0) {

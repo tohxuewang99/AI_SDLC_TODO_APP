@@ -20,6 +20,7 @@ import {
 import { calculateProgress } from '@/lib/subtask-logic';
 import { sectionTodos } from '@/lib/todo-logic';
 import ReminderSelect from '@/app/reminder-select';
+import TemplateControls, { type TemplateControlsHandle } from '@/app/template-controls';
 import { useNotifications } from '@/lib/hooks/useNotifications';
 import { isReminderMinutes, REMINDER_LABELS } from '@/lib/reminders';
 
@@ -80,6 +81,7 @@ function TodoSection({
   onToggle,
   onEdit,
   onDelete,
+  onSaveTemplate,
   onAddSubtask,
   onToggleSubtask,
   onDeleteSubtask,
@@ -91,6 +93,7 @@ function TodoSection({
   onToggle: (todo: Todo, completed: boolean) => void;
   onEdit: (todo: Todo) => void;
   onDelete: (todo: Todo) => void;
+  onSaveTemplate: (todo: Todo) => void;
   onAddSubtask: (todoId: number, title: string) => Promise<void>;
   onToggleSubtask: (todoId: number, subtask: Subtask, completed: boolean) => void;
   onDeleteSubtask: (todoId: number, subtask: Subtask) => Promise<void>;
@@ -152,6 +155,15 @@ function TodoSection({
               </div>
             </div>
             <div className="flex gap-4 pl-8 text-sm sm:pl-0">
+              <button
+                aria-label={`Save "${todo.title}" as template`}
+                className="font-semibold text-indigo-700 hover:text-indigo-900 disabled:opacity-50"
+                disabled={todo.id < 0 || (todo.subtasks ?? []).some((subtask) => subtask.id < 0)}
+                onClick={() => onSaveTemplate(todo)}
+                type="button"
+              >
+                Save template
+              </button>
               <button
                 className="font-semibold text-indigo-700 hover:text-indigo-900"
                 onClick={() => onEdit(todo)}
@@ -341,6 +353,7 @@ export default function TodoClient({ initialTodos, userId, initialNow }: TodoCli
   const nextOptimisticId = useRef(0);
   const nextOptimisticSubtaskId = useRef(0);
   const subtaskMutationVersions = useRef(new Map<number, number>());
+  const templateControls = useRef<TemplateControlsHandle>(null);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(getSingaporeNow()), 30_000);
@@ -909,6 +922,11 @@ export default function TodoClient({ initialTodos, userId, initialNow }: TodoCli
             </button>
           </div>
         </form>
+        <TemplateControls
+          ref={templateControls}
+          draft={{ title, priority, isRecurring, recurrencePattern, reminderMinutes }}
+          onCreated={(todo) => setTodos((current) => [...current, todo])}
+        />
       </section>
 
       {error && <p className="mt-4 text-sm text-red-700" role="alert">{error}</p>}
@@ -933,6 +951,7 @@ export default function TodoClient({ initialTodos, userId, initialNow }: TodoCli
         onToggle={toggleTodo}
         onEdit={openEdit}
         onDelete={deleteTodo}
+        onSaveTemplate={(todo) => templateControls.current?.saveTodo(todo)}
         onAddSubtask={addSubtask}
         onToggleSubtask={toggleSubtask}
         onDeleteSubtask={deleteSubtask}
@@ -945,6 +964,7 @@ export default function TodoClient({ initialTodos, userId, initialNow }: TodoCli
         onToggle={toggleTodo}
         onEdit={openEdit}
         onDelete={deleteTodo}
+        onSaveTemplate={(todo) => templateControls.current?.saveTodo(todo)}
         onAddSubtask={addSubtask}
         onToggleSubtask={toggleSubtask}
         onDeleteSubtask={deleteSubtask}
@@ -957,6 +977,7 @@ export default function TodoClient({ initialTodos, userId, initialNow }: TodoCli
         onToggle={toggleTodo}
         onEdit={openEdit}
         onDelete={deleteTodo}
+        onSaveTemplate={(todo) => templateControls.current?.saveTodo(todo)}
         onAddSubtask={addSubtask}
         onToggleSubtask={toggleSubtask}
         onDeleteSubtask={deleteSubtask}
